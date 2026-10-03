@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LRC Sync - Lyrics to LRC</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            min-height: 100vh;
+            padding: 2rem;
+        }
+        .container { max-width: 800px; margin: 0 auto; }
+        h1 { text-align: center; margin-bottom: 0.5rem; color: #e94560; }
+        .subtitle { text-align: center; color: #888; margin-bottom: 2rem; }
+        .card {
+            background: #16213e;
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 1rem;
+        }
+        label { display: block; margin-bottom: 0.5rem; font-weight: 600; }
+        input[type="file"], textarea, select {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid #333;
+            border-radius: 8px;
+            background: #0f3460;
+            color: #eee;
+            font-size: 1rem;
+        }
+        textarea { min-height: 200px; resize: vertical; font-family: monospace; }
+        input[type="file"] { padding: 0.5rem; }
+        .row { display: flex; gap: 1rem; margin-bottom: 1rem; }
+        .row > div { flex: 1; }
+        button {
+            background: #e94560;
+            color: white;
+            border: none;
+            padding: 0.75rem 2rem;
+            border-radius: 8px;
+            font-size: 1rem;
+            cursor: pointer;
+            width: 100%;
+            font-weight: 600;
+        }
+        button:hover { background: #c73454; }
+        button:disabled { background: #555; cursor: not-allowed; }
+        .result { display: none; }
+        .result pre {
+            background: #0f3460;
+            padding: 1rem;
+            border-radius: 8px;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            font-family: monospace;
+            font-size: 0.9rem;
+        }
+        .download-btn {
+            background: #0f3460;
+            margin-top: 0.5rem;
+        }
+        .download-btn:hover { background: #1a4a7a; }
+        .status { text-align: center; color: #888; margin-top: 0.5rem; }
+        .error { color: #e94560; text-align: center; margin-top: 0.5rem; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>LRC Sync</h1>
+        <p class="subtitle">Sync your lyrics with audio to create LRC files</p>
+
+        <div class="card">
+            <div class="row">
+                <div>
+                    <label for="audio">Audio File</label>
+                    <input type="file" id="audio" accept="audio/*">
+                </div>
+                <div>
+                    <label for="model">Model</label>
+                    <select id="model">
+                        <option value="tiny">Tiny (fastest, least accurate)</option>
+                        <option value="base">Base</option>
+                        <option value="small" selected>Small (recommended)</option>
+                        <option value="medium">Medium</option>
+                        <option value="large-v3">Large v3 (slowest, most accurate)</option>
+                    </select>
+                </div>
+            </div>
+            <div class="row">
+                <div>
+                    <label for="youtubeUrl">Or YouTube URL</label>
+                    <input type="url" id="youtubeUrl" placeholder="https://www.youtube.com/watch?v=...">
+                </div>
+            </div>
+            <div class="row">
+                <div>
+                    <label for="language">Language (optional)</label>
+                    <input type="text" id="language" placeholder="Auto-detect">
+                </div>
+                <div>
+                    <label for="offset">Offset (seconds)</label>
+                    <input type="number" id="offset" value="0" step="0.1">
+                </div>
+            </div>
+            <label for="lyrics">Lyrics (one line per lyric line)</label>
+            <textarea id="lyrics" placeholder="Enter your lyrics here...&#10;One line per lyric line"></textarea>
+            <br><br>
+            <button id="alignBtn" onclick="align()">Generate LRC</button>
+            <div id="progressWrap" style="display:none; margin-top:1rem;">
+                <div style="background:#0f3460; border-radius:8px; height:20px; overflow:hidden;">
+                    <div id="progressFill" style="background:#e94560; height:100%; width:0%; transition:width 0.3s;"></div>
+                </div>
+                <div id="progressLabel" class="status"></div>
+            </div>
+            <div id="status" class="status"></div>
+            <div id="error" class="error"></div>
+        </div>
+
+        <div class="card result" id="resultCard">
+            <label>Result</label>
+            <pre id="result"></pre>
+            <button class="download-btn" onclick="downloadLRC()">Download .lrc</button>
+            <br><br>
+            <label>Publish to LRCLIB</label>
+            <div class="row">
+                <div>
+                    <label for="trackName">Song name</label>
+                    <input type="text" id="trackName" placeholder="Track title">
+                </div>
+                <div>
+                    <label for="artistName">Artist</label>
+                    <input type="text" id="artistName" placeholder="Artist name">
+                </div>
+            </div>
+            <div class="row">
+                <div>
+                    <label for="duration">Duration (seconds)</label>
+                    <input type="number" id="duration" placeholder="e.g. 215" min="1" step="1">
+                </div>
+                <div>
+                    <label for="albumName">Album (optional)</label>
+                    <input type="text" id="albumName" placeholder="Album name">
+                </div>
+            </div>
+            <button id="publishBtn" onclick="publishToLrclib()">Upload to LRCLIB</button>
+            <div id="publishStatus" class="status"></div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
