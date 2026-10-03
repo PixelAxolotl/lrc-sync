@@ -34,6 +34,16 @@ def main():
         "--output", "-o", help="Output LRC file path (default: stdout)"
     )
     parser.add_argument(
+        "--output-words", help="Output word-level timestamps JSON file path"
+    )
+    parser.add_argument(
+        "--output-sync", help="Output per-character sync JSON file path (requires --characterlevel)"
+    )
+    parser.add_argument(
+        "--characterlevel", action="store_true",
+        help="Enable word/character-level JSON outputs (words.json, output_sync.json)"
+    )
+    parser.add_argument(
         "--model", "-m", default="small",
         choices=["tiny", "base", "small", "medium", "large-v3"],
         help="Whisper model size (default: small)"
@@ -45,6 +55,12 @@ def main():
         "--offset", type=float, default=0.0,
         help="Time offset in seconds (positive = lyrics appear later)"
     )
+    parser.add_argument("--temperature", type=float, default=0.0,
+                        help="Whisper sampling temperature (default 0.0)")
+    parser.add_argument("--beam-size", type=int, default=5,
+                        help="Whisper beam size (default 5)")
+    parser.add_argument("--best-of", type=int, default=5,
+                        help="Whisper best_of (default 5)")
     parser.add_argument(
         "--publish", action="store_true",
         help="Publish the resulting LRC to LRCLIB (requires --track, --artist, --duration)"
@@ -58,6 +74,13 @@ def main():
     parser.add_argument("--album", help="Album name for LRCLIB publish (optional)")
 
     args = parser.parse_args()
+
+    if (args.output_words or args.output_sync) and not args.characterlevel:
+        print(
+            "Error: --output-words/--output-sync require --characterlevel",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
     # Validate lyrics file
     if not Path(args.lyrics).exists():
@@ -94,6 +117,9 @@ def main():
             language=args.language,
             offset=args.offset,
             progress_callback=_progress,
+            temperature=args.temperature,
+            beam_size=args.beam_size,
+            best_of=args.best_of,
         )
 
         # Print warnings
@@ -106,6 +132,16 @@ def main():
             print(f"LRC written to {args.output}", file=sys.stderr)
         else:
             print(result.lrc_text)
+
+        if args.output_words:
+            from aligner import words_to_json
+            Path(args.output_words).write_text(
+                words_to_json(result.words), encoding="utf-8")
+            print(f"Words JSON written to {args.output_words}", file=sys.stderr)
+
+        if args.output_sync:
+            Path(args.output_sync).write_text(result.sync_text, encoding="utf-8")
+            print(f"Sync JSON written to {args.output_sync}", file=sys.stderr)
 
         # Publish to LRCLIB
         if args.publish:
