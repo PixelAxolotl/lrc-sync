@@ -140,3 +140,32 @@ def publish_lrc(
         raise RuntimeError(f"LRCLIB publish failed: HTTP {e.code} {detail}")
     except Exception as e:
         raise RuntimeError(f"LRCLIB publish failed: {e}")
+
+
+def lookup_record(artist_name: str, track_name: str, duration: float) -> Optional[dict]:
+    """
+    Fetch a track's LRCLIB record (used to resolve the id after publishing).
+    Returns the record dict, or None if not found.
+    """
+    import urllib.request
+    import urllib.parse
+    import json
+
+    params = urllib.parse.urlencode({
+        "artist_name": artist_name.strip(),
+        "track_name": track_name.strip(),
+        "duration": duration,
+    })
+    req = urllib.request.Request(
+        f"https://lrclib.net/api/get?{params}",
+        headers={"User-Agent": USER_AGENT},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return None
+        raise RuntimeError(f"LRCLIB lookup failed: HTTP {e.code}")
+    except Exception as e:
+        raise RuntimeError(f"LRCLIB lookup failed: {e}")

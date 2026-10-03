@@ -103,3 +103,26 @@ class TestPublishLRC:
         with patch("urllib.request.urlopen", side_effect=Exception("403")):
             with pytest.raises(RuntimeError):
                 publish_lrc("Song", "Artist", 215, "[00:01.23]Hi\n")
+
+
+class TestLookup:
+    def _mock_record(self):
+        import json
+        from unittest.mock import MagicMock
+        resp = MagicMock()
+        resp.read.return_value = json.dumps({"id": 38950050}).encode("utf-8")
+        resp.__enter__.return_value = resp
+        return resp
+
+    def test_found(self):
+        from lrclib import lookup_record
+        with patch("urllib.request.urlopen", return_value=self._mock_record()):
+            assert lookup_record("Superfly", "花蔭", 228) == {"id": 38950050}
+
+    def test_not_found_returns_none(self):
+        import urllib.error
+        from lrclib import lookup_record
+        err = urllib.error.HTTPError(
+            "http://x", 404, "Not Found", {}, None)
+        with patch("urllib.request.urlopen", side_effect=err):
+            assert lookup_record("Nobody", "Nothing", 1) is None

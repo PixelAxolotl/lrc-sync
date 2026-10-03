@@ -237,7 +237,9 @@ async def publish_endpoint(
     lrc: str = Form(...),
     album: str = Form(None),
 ):
-    """Publish synced LRC to LRCLIB."""
+    """Publish synced LRC to LRCLIB. Returns {"status", "id"}."""
+    from lrclib import lookup_record
+
     try:
         result = publish_lrc(
             track_name=track,
@@ -246,7 +248,16 @@ async def publish_endpoint(
             lrc_text=lrc,
             album_name=album,
         )
-        return {"status": "published", "response": result}
+        entry_id = result.get("id")
+        if entry_id is None:
+            # Empty-body success: resolve the id with a lookup
+            try:
+                record = lookup_record(artist, track, duration)
+                if record:
+                    entry_id = record.get("id")
+            except RuntimeError:
+                pass
+        return {"status": "published", "id": entry_id, "response": result}
     except (ValueError, RuntimeError) as e:
         from fastapi.responses import JSONResponse
         return JSONResponse(status_code=400, content={"status": "error", "message": str(e)})

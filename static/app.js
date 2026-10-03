@@ -150,7 +150,9 @@ async function publishToLrclib() {
         if (!response.ok) {
             throw new Error(data.message || `Server error: ${response.status}`);
         }
-        publishStatus.textContent = "Published to LRCLIB!";
+        publishStatus.textContent = data.id
+            ? `Published to LRCLIB! ID: ${data.id}`
+            : "Published to LRCLIB!";
     } catch (e) {
         publishStatus.textContent = `Publish failed: ${e.message}`;
     } finally {
