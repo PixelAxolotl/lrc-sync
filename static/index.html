@@ -112,11 +112,37 @@
         }
         .download-btn { background: var(--field); border: 1px solid var(--field-border); margin-top: 0.75rem; }
         .download-btn:hover { background: #1a4a7a; }
+        #cancelBtn:hover { background: var(--danger); border-color: var(--danger); color: #fff; }
         #retryBtn { margin-top: 0.5rem; }
         .divider { border-top: 1px solid rgba(255, 255, 255, 0.1); margin: 1.25rem 0; }
         .status { text-align: center; color: var(--muted); margin-top: 0.75rem; min-height: 1.4em; font-size: 0.92rem; }
         .error { color: var(--danger); text-align: center; margin-top: 0.75rem; min-height: 1.4em; font-size: 0.92rem; }
         #progressWrap { margin-top: 1rem; }
+        .tabs { display: flex; gap: 0.5rem; margin-bottom: 1rem; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 0.5rem; }
+        .tab { width: auto; padding: 0.45rem 1.1rem; background: var(--field); border: 1px solid var(--field-border); font-weight: 600; }
+        .tab.active { background: var(--accent); border-color: var(--accent); }
+        #tabAdvancedPanel .row > div > label { cursor: help; }
+        #tabAdvancedPanel .row > div { padding: 0.25rem 0; }
+        .tip-wrap { position: relative; }
+        .tip { cursor: help; color: var(--muted); display: inline-block; position: relative; }
+        .tip:hover::after {
+            content: attr(data-tip);
+            position: absolute;
+            left: 0; top: 1.6em;
+            max-width: 280px;
+            width: max-content;
+            background: #0f3460;
+            border: 1px solid var(--field-border);
+            color: var(--text);
+            padding: 0.5rem 0.7rem;
+            border-radius: 8px;
+            font-size: 0.8rem;
+            line-height: 1.45;
+            white-space: normal;
+            z-index: 50;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+        }
+        input[type="range"] { width: 100%; accent-color: var(--accent); background: transparent; border: none; padding: 0; height: 2.2rem; }
         .track {
             background: var(--field);
             border: 1px solid var(--field-border);
@@ -124,7 +150,7 @@
             height: 20px;
             overflow: hidden;
         }
-        #progressFill { background: var(--accent); height: 100%; width: 0%; transition: width 200ms ease-out; }
+        #progressFill { background: var(--accent); height: 100%; width: 0%; transition: none; }
         ::-webkit-scrollbar { width: 12px; height: 12px; }
         ::-webkit-scrollbar-track { background: var(--bg); }
         ::-webkit-scrollbar-thumb { background: var(--field-border); border-radius: 8px; border: 3px solid var(--bg); }
@@ -147,6 +173,11 @@
         </header>
 
         <div class="card">
+            <div class="tabs">
+                <button id="tabMain" class="tab active" onclick="showTab('main')">Main</button>
+                <button id="tabAdvanced" class="tab" onclick="showTab('advanced')">Advanced</button>
+            </div>
+            <div id="tabMainPanel">
             <div class="row">
                 <div>
                     <label for="audio">Audio File</label>
@@ -203,8 +234,29 @@
             </div>
             <label for="lyrics">Lyrics <span class="hint">(one line per lyric line)</span></label>
             <textarea id="lyrics" placeholder="Enter your lyrics here...&#10;One line per lyric line"></textarea>
+            </div>
+            <div id="tabAdvancedPanel" style="display:none;">
+                <div class="row">
+                    <div class="tip-wrap">
+                        <label for="temperature">Temperature <span class="hint" id="temperatureVal">0.0</span> <span class="tip" data-tip="Sampling temperature: 0 = deterministic and safest for lyrics. Raise toward 1.0 only for more varied transcription; higher values risk more mistakes.">ⓘ</span></label>
+                        <input type="range" id="temperature" min="0" max="1" step="0.1" value="0" oninput="document.getElementById('temperatureVal').textContent=this.value">
+                    </div>
+                    <div class="tip-wrap">
+                        <label for="beamSize">Beam size <span class="hint" id="beamSizeVal">5</span> <span class="tip" data-tip="Beam size: wider beam search = more accurate but slower. 5 is a good default; try 3 for speed or 8-10 for the slowest, most careful result.">ⓘ</span></label>
+                        <input type="range" id="beamSize" min="1" max="10" step="1" value="5" oninput="document.getElementById('beamSizeVal').textContent=this.value">
+                    </div>
+                </div>
+                <div class="row">
+                    <div class="tip-wrap">
+                        <label for="bestOf">Best of <span class="hint" id="bestOfVal">5</span> <span class="tip" data-tip="Best of: number of candidates sampled before picking the best result. Pairs with temperature; raise both only for hard tracks, at the cost of speed.">ⓘ</span></label>
+                        <input type="range" id="bestOf" min="1" max="10" step="1" value="5" oninput="document.getElementById('bestOfVal').textContent=this.value">
+                    </div>
+                    <div></div>
+                </div>
+            </div>
             <br><br>
             <button id="alignBtn" onclick="align()">Generate LRC</button>
+            <button id="cancelBtn" class="download-btn" style="display:none; margin-top:0.5rem;" onclick="cancelJob()">Cancel</button>
             <div id="progressWrap" style="display:none;">
                 <div class="track">
                     <div id="progressFill"></div>
@@ -219,6 +271,8 @@
             <h2>Result</h2>
             <pre id="result"></pre>
             <button class="download-btn" onclick="downloadLRC()">Download .lrc</button>
+            <button id="wordsBtn" class="download-btn" onclick="downloadWords()">Download words.json</button>
+            <button id="syncBtn" class="download-btn" onclick="downloadSync()">Download output_sync.json</button>
             <div class="divider"></div>
             <h2>Publish to LRCLIB</h2>
             <div class="row">

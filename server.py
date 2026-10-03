@@ -39,6 +39,19 @@ app.add_middleware(NoCacheMiddleware)
 jobs: dict = {}
 jobs_lock = threading.Lock()
 
+# Word timestamps kept separate so job polls stay small:
+# job_id -> [{"word", "start", "end"}, ...]
+job_words: dict = {}
+
+# Per-character sync JSON per finished job
+job_sync: dict = {}
+
+# When False (default), words.json / output_sync.json outputs are disabled
+CHARACTER_LEVEL = False
+
+# Cancel events per running job
+job_cancel: dict = {}
+
 
 def _update_job(job_id: str, stage: str, percent: int, message: str):
     with jobs_lock:
@@ -59,12 +72,28 @@ def _run_job(
     language: str = None,
     offset: float = 0.0,
     cleanup_paths: list = None,
+    temperature: float = 0.0,
+    beam_size: int = 5,
+    best_of: int = 5,
 ):
     """Background worker: download (if URL) + align, storing progress."""
     def cb(stage, percent, message):
+        if job_cancel.get(job_id) and job_cancel[job_id].is_set():
+            raise RuntimeError("Cancelled")
+        if stage == "detecting_language" and "Detected" in message:
+            try:
+                lang = message.rsplit(":", 1)[1].split("(")[0].strip()
+                if lang:
+                    with jobs_lock:
+                        if job_id in jobs:
+                            jobs[job_id]["detected_language"] = lang
+            except IndexError:
+                pass
         _update_job(job_id, stage, percent, message)
 
     try:
+        if job_cancel.get(job_id) and job_cancel[job_id].is_set():
+            raise RuntimeError("Cancelled")
         path = audio_path
         if url:
             cb("downloading", 0, "Downloading...")
@@ -79,24 +108,44 @@ def _run_job(
             language=language,
             offset=offset,
             progress_callback=cb,
+            temperature=temperature,
+            beam_size=beam_size,
+            best_of=best_of,
         )
         with jobs_lock:
             jobs[job_id].update({
                 "done": True,
                 "lrc": result.lrc_text,
                 "warnings": result.warnings,
+                "detected_language": getattr(result, "detected_language", None),
                 "stage": "done",
                 "percent": 100,
                 "message": "Done!",
             })
-    except Exception as e:
         with jobs_lock:
-            jobs[job_id].update({
-                "done": True,
-                "error": str(e),
-                "stage": "error",
-                "message": f"Error: {e}",
-            })
+            if CHARACTER_LEVEL:
+                job_words[job_id] = [
+                    {"word": w.word, "start": round(w.start, 3), "end": round(w.end, 3)}
+                    for w in result.words
+                ]
+                job_sync[job_id] = result.sync_text
+    except Exception as e:
+        cancelled = job_cancel.get(job_id) is not None and job_cancel[job_id].is_set()
+        with jobs_lock:
+            if cancelled or str(e) == "Cancelled":
+                jobs[job_id].update({
+                    "done": True,
+                    "stage": "cancelled",
+                    "message": "Cancelled",
+                    "error": None,
+                })
+            else:
+                jobs[job_id].update({
+                    "done": True,
+                    "error": str(e),
+                    "stage": "error",
+                    "message": f"Error: {e}",
+                })
     finally:
         for p in (cleanup_paths or []):
             Path(p).unlink(missing_ok=True)
@@ -110,6 +159,9 @@ async def create_job(
     model: str = Form("small"),
     language: str = Form(None),
     offset: float = Form(0.0),
+    temperature: float = Form(0.0),
+    beam_size: int = Form(5),
+    best_of: int = Form(5),
 ):
     """Start an alignment job. Returns {"job_id": ...} immediately."""
     if (audio is None or not audio.filename) and not url:
@@ -126,6 +178,7 @@ async def create_job(
             "message": "Queued...", "done": False,
             "lrc": None, "error": None, "warnings": [],
         }
+        job_cancel[job_id] = threading.Event()
 
     cleanup_paths = []
     audio_path = None
@@ -149,6 +202,9 @@ async def create_job(
             "model": model,
             "language": language,
             "offset": offset,
+            "temperature": temperature,
+            "beam_size": beam_size,
+            "best_of": best_of,
             "cleanup_paths": cleanup_paths,
         },
         daemon=True,
@@ -165,7 +221,62 @@ async def get_job(job_id: str):
         if job is None:
             from fastapi.responses import JSONResponse
             return JSONResponse(status_code=404, content={"error": "Unknown job"})
-        return dict(job)
+        return dict(job, character_level=CHARACTER_LEVEL)
+
+
+@app.post("/api/jobs/{job_id}/cancel")
+async def cancel_job(job_id: str):
+    with jobs_lock:
+        job = jobs.get(job_id)
+        if job is None:
+            from fastapi.responses import JSONResponse
+            return JSONResponse(status_code=404, content={"error": "Unknown job"})
+        if job.get("done"):
+            return {"status": "already_done"}
+        if job_id in job_cancel:
+            job_cancel[job_id].set()
+        job.update({"stage": "cancelled", "message": "Cancelling..."})
+    return {"status": "ok"}
+
+
+@app.get("/api/jobs/{job_id}/sync")
+async def get_job_sync(job_id: str):
+    """Return per-character sync JSON for a finished job."""
+    from fastapi.responses import PlainTextResponse, JSONResponse
+    with jobs_lock:
+        job = jobs.get(job_id)
+        if job is None:
+            return JSONResponse(status_code=404, content={"error": "Unknown job"})
+        if job.get("error"):
+            return JSONResponse(status_code=409, content={"error": f"Job failed: {job['error']}"})
+        if not job.get("done"):
+            return JSONResponse(status_code=409, content={"error": "Job not done yet"})
+        if not CHARACTER_LEVEL:
+            return JSONResponse(status_code=404, content={"error": "Character-level output disabled"})
+        text = job_sync.get(job_id)
+        if text is None:
+            return JSONResponse(status_code=404, content={"error": "No sync data"})
+        return PlainTextResponse(text, media_type="application/json")
+
+
+@app.get("/api/jobs/{job_id}/words")
+async def get_job_words(job_id: str):
+    """Return word-level timestamps for a finished job as {"words": [...]}."""
+    with jobs_lock:
+        job = jobs.get(job_id)
+        if job is None:
+            from fastapi.responses import JSONResponse
+            return JSONResponse(status_code=404, content={"error": "Unknown job"})
+        if job.get("error"):
+            from fastapi.responses import JSONResponse
+            return JSONResponse(status_code=409, content={"error": f"Job failed: {job['error']}"})
+        if not job.get("done"):
+            from fastapi.responses import JSONResponse
+            return JSONResponse(status_code=409, content={"error": "Job not done yet"})
+        if not CHARACTER_LEVEL:
+            from fastapi.responses import JSONResponse
+            return JSONResponse(status_code=404, content={"error": "Character-level output disabled"})
+        return {"words": job_words.get(job_id, [])}
 
 
 @app.post("/api/align", response_class=PlainTextResponse)
@@ -293,7 +404,15 @@ def main():
         "--no-browser", action="store_true",
         help="Don't auto-open the web UI in a browser",
     )
+    parser.add_argument(
+        "--characterlevel", action="store_true",
+        help="Enable word/character-level JSON endpoints and UI buttons",
+    )
+    # (--silent removed: console output is always on now)
     args = parser.parse_args()
+
+    global CHARACTER_LEVEL
+    CHARACTER_LEVEL = bool(args.characterlevel)
 
     if not args.no_browser:
         import threading
@@ -310,7 +429,7 @@ def main():
         print(f"Opening {url} in your browser...")
 
     import uvicorn
-    uvicorn.run(app, host=args.host, port=args.port)
+    uvicorn.run(app, host=args.host, port=args.port, access_log=False)
 
 
 if __name__ == "__main__":
