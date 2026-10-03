@@ -9,3 +9,13 @@ ffmpeg.zip
 # Temp downloads
 *.part
 *.mp4
+
+# Local test inputs/outputs (never commit lyrics, audio, or results)
+*.lrc
+lyrics*.txt
+words*.json
+*.mp3
+*.wav
+*.flac
+*.m4a
+*.ogg
