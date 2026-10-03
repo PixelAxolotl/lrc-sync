@@ -117,6 +117,8 @@ async function publishToLrclib() {
     const album = document.getElementById("albumName").value.trim();
     const publishStatus = document.getElementById("publishStatus");
     const btn = document.getElementById("publishBtn");
+    const retryBtn = document.getElementById("retryBtn");
+    if (retryBtn) retryBtn.style.display = "none";
 
     if (!lrcResult) {
         publishStatus.textContent = "Generate an LRC first.";
@@ -152,10 +154,35 @@ async function publishToLrclib() {
         }
         publishStatus.textContent = data.id
             ? `Published to LRCLIB! ID: ${data.id}`
-            : "Published to LRCLIB!";
+            : "Published to LRCLIB! ID not indexed yet — wait a bit, then hit “Check again for ID”.";
+        if (!data.id && retryBtn) retryBtn.style.display = "block";
     } catch (e) {
         publishStatus.textContent = `Publish failed: ${e.message}`;
     } finally {
         btn.disabled = false;
+    }
+}
+
+async function retryLookup() {
+    const track = document.getElementById("trackName").value.trim();
+    const artist = document.getElementById("artistName").value.trim();
+    const duration = parseFloat(document.getElementById("duration").value);
+    const publishStatus = document.getElementById("publishStatus");
+    const retryBtn = document.getElementById("retryBtn");
+
+    publishStatus.textContent = "Checking LRCLIB for ID...";
+    try {
+        const params = new URLSearchParams({ artist, track, duration });
+        const response = await fetch(`/api/lookup?${params}`);
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(data.error || `Server error: ${response.status}`);
+        }
+        publishStatus.textContent = data.id
+            ? `Published to LRCLIB! ID: ${data.id}`
+            : "Published to LRCLIB!";
+        if (data.id && retryBtn) retryBtn.style.display = "none";
+    } catch (e) {
+        publishStatus.textContent = `Still not on LRCLIB: ${e.message} — wait a bit and retry.`;
     }
 }
