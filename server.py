@@ -225,8 +225,24 @@ async def youtube_endpoint(
 
 
 @app.get("/api/health")
+@app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/api/lookup")
+async def lookup_endpoint(artist: str, track: str, duration: float):
+    """Retry ID lookup without re-publishing. Returns {"id": ...} or 404."""
+    from fastapi.responses import JSONResponse
+    from lrclib import lookup_record
+
+    try:
+        record = lookup_record(artist, track, duration)
+    except RuntimeError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+    if record is None:
+        return JSONResponse(status_code=404, content={"error": "Not found on LRCLIB yet"})
+    return {"id": record.get("id")}
 
 
 @app.post("/api/publish")

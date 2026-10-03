@@ -5,73 +5,146 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LRC Sync - Lyrics to LRC</title>
     <style>
+        :root {
+            --bg: #1a1a2e;
+            --card: #16213e;
+            --field: #0f3460;
+            --field-border: #2a4a7a;
+            --accent: #e94560;
+            --accent-hover: #c73454;
+            --text: #eee;
+            --muted: #a8b2d1;
+            --danger: #ff6b81;
+            --radius: 12px;
+        }
         * { box-sizing: border-box; margin: 0; padding: 0; }
+        ::selection { background: var(--accent); color: #fff; }
+        html { -webkit-text-size-adjust: 100%; }
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #1a1a2e;
-            color: #eee;
+            background: var(--bg);
+            color: var(--text);
             min-height: 100vh;
-            padding: 2rem;
+            padding: 2.5rem 1.25rem 3rem;
+            line-height: 1.5;
         }
-        .container { max-width: 800px; margin: 0 auto; }
-        h1 { text-align: center; margin-bottom: 0.5rem; color: #e94560; }
-        .subtitle { text-align: center; color: #888; margin-bottom: 2rem; }
+        .container { max-width: 860px; margin: 0 auto; }
+        header { text-align: center; margin: 0.5rem 0 1.75rem; }
+        h1 { font-size: 2rem; font-weight: 800; letter-spacing: -0.02em; color: var(--accent); margin-bottom: 0.35rem; }
+        .subtitle { color: var(--muted); font-size: 1rem; max-width: 60ch; margin: 0 auto; }
         .card {
-            background: #16213e;
-            border-radius: 12px;
+            background: var(--card);
+            border: 1px solid rgba(255, 255, 255, 0.07);
+            border-radius: var(--radius);
             padding: 1.5rem;
-            margin-bottom: 1rem;
+            margin-bottom: 1.25rem;
+            box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
         }
-        label { display: block; margin-bottom: 0.5rem; font-weight: 600; }
-        input[type="file"], textarea, select {
+        .card h2 { font-size: 1.05rem; font-weight: 700; margin-bottom: 1rem; letter-spacing: -0.01em; }
+        label { display: block; margin-bottom: 0.45rem; font-weight: 600; font-size: 0.9rem; }
+        .hint { font-weight: 400; color: var(--muted); font-size: 0.82rem; }
+        input[type="file"],
+        input[type="text"],
+        input[type="url"],
+        input[type="number"],
+        textarea,
+        select {
             width: 100%;
-            padding: 0.75rem;
-            border: 1px solid #333;
+            padding: 0.7rem 0.8rem;
+            border: 1px solid var(--field-border);
             border-radius: 8px;
-            background: #0f3460;
-            color: #eee;
+            background: var(--field);
+            color: var(--text);
             font-size: 1rem;
+            font-family: inherit;
         }
-        textarea { min-height: 200px; resize: vertical; font-family: monospace; }
-        input[type="file"] { padding: 0.5rem; }
+        input::placeholder, textarea::placeholder { color: var(--muted); opacity: 0.85; }
+        input:focus-visible, textarea:focus-visible, select:focus-visible, button:focus-visible {
+            outline: 2px solid var(--accent);
+            outline-offset: 2px;
+        }
+        textarea { min-height: 190px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; line-height: 1.6; }
+        input[type="file"] { padding: 0.55rem 0.7rem; }
+        input[type="file"]::file-selector-button {
+            background: var(--field-border);
+            color: var(--text);
+            border: none;
+            border-radius: 6px;
+            padding: 0.4rem 0.8rem;
+            margin-right: 0.75rem;
+            font: inherit;
+            font-size: 0.9rem;
+            cursor: pointer;
+        }
         .row { display: flex; gap: 1rem; margin-bottom: 1rem; }
-        .row > div { flex: 1; }
+        .row > div { flex: 1; min-width: 0; }
+        .row:last-child { margin-bottom: 0; }
         button {
-            background: #e94560;
+            background: var(--accent);
             color: white;
             border: none;
-            padding: 0.75rem 2rem;
+            padding: 0.8rem 2rem;
             border-radius: 8px;
             font-size: 1rem;
             cursor: pointer;
             width: 100%;
-            font-weight: 600;
+            font-weight: 700;
+            font-family: inherit;
+            transition: background-color 180ms ease-out, transform 180ms ease-out;
         }
-        button:hover { background: #c73454; }
-        button:disabled { background: #555; cursor: not-allowed; }
+        button:hover { background: var(--accent-hover); }
+        button:active { transform: translateY(1px); }
+        button:disabled { background: #555; cursor: not-allowed; transform: none; }
         .result { display: none; }
         .result pre {
-            background: #0f3460;
+            background: var(--field);
+            border: 1px solid var(--field-border);
             padding: 1rem;
             border-radius: 8px;
             overflow-x: auto;
             white-space: pre-wrap;
-            font-family: monospace;
-            font-size: 0.9rem;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 0.88rem;
+            line-height: 1.65;
+            max-height: 320px;
+            overflow-y: auto;
+            font-variant-numeric: tabular-nums;
         }
-        .download-btn {
-            background: #0f3460;
-            margin-top: 0.5rem;
-        }
+        .download-btn { background: var(--field); border: 1px solid var(--field-border); margin-top: 0.75rem; }
         .download-btn:hover { background: #1a4a7a; }
-        .status { text-align: center; color: #888; margin-top: 0.5rem; }
-        .error { color: #e94560; text-align: center; margin-top: 0.5rem; }
+        #retryBtn { margin-top: 0.5rem; }
+        .divider { border-top: 1px solid rgba(255, 255, 255, 0.1); margin: 1.25rem 0; }
+        .status { text-align: center; color: var(--muted); margin-top: 0.75rem; min-height: 1.4em; font-size: 0.92rem; }
+        .error { color: var(--danger); text-align: center; margin-top: 0.75rem; min-height: 1.4em; font-size: 0.92rem; }
+        #progressWrap { margin-top: 1rem; }
+        .track {
+            background: var(--field);
+            border: 1px solid var(--field-border);
+            border-radius: 8px;
+            height: 20px;
+            overflow: hidden;
+        }
+        #progressFill { background: var(--accent); height: 100%; width: 0%; transition: width 200ms ease-out; }
+        ::-webkit-scrollbar { width: 12px; height: 12px; }
+        ::-webkit-scrollbar-track { background: var(--bg); }
+        ::-webkit-scrollbar-thumb { background: var(--field-border); border-radius: 8px; border: 3px solid var(--bg); }
+        @media (max-width: 640px) {
+            body { padding: 1.5rem 0.9rem 2.5rem; }
+            .row { flex-direction: column; }
+            h1 { font-size: 1.7rem; }
+            .card { padding: 1.1rem; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after { transition: none !important; }
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>LRC Sync</h1>
-        <p class="subtitle">Sync your lyrics with audio to create LRC files</p>
+        <header>
+            <h1>LRC Sync</h1>
+            <p class="subtitle">Sync your lyrics with audio to create LRC files</p>
+        </header>
 
         <div class="card">
             <div class="row">
@@ -124,30 +197,30 @@
                     </select>
                 </div>
                 <div>
-                    <label for="offset">Offset (seconds)</label>
+                    <label for="offset">Offset <span class="hint">(seconds)</span></label>
                     <input type="number" id="offset" value="0" step="0.1">
                 </div>
             </div>
-            <label for="lyrics">Lyrics (one line per lyric line)</label>
+            <label for="lyrics">Lyrics <span class="hint">(one line per lyric line)</span></label>
             <textarea id="lyrics" placeholder="Enter your lyrics here...&#10;One line per lyric line"></textarea>
             <br><br>
             <button id="alignBtn" onclick="align()">Generate LRC</button>
-            <div id="progressWrap" style="display:none; margin-top:1rem;">
-                <div style="background:#0f3460; border-radius:8px; height:20px; overflow:hidden;">
-                    <div id="progressFill" style="background:#e94560; height:100%; width:0%; transition:width 0.3s;"></div>
+            <div id="progressWrap" style="display:none;">
+                <div class="track">
+                    <div id="progressFill"></div>
                 </div>
                 <div id="progressLabel" class="status"></div>
             </div>
-            <div id="status" class="status"></div>
-            <div id="error" class="error"></div>
+            <div id="status" class="status" role="status"></div>
+            <div id="error" class="error" role="alert"></div>
         </div>
 
         <div class="card result" id="resultCard">
-            <label>Result</label>
+            <h2>Result</h2>
             <pre id="result"></pre>
             <button class="download-btn" onclick="downloadLRC()">Download .lrc</button>
-            <br><br>
-            <label>Publish to LRCLIB</label>
+            <div class="divider"></div>
+            <h2>Publish to LRCLIB</h2>
             <div class="row">
                 <div>
                     <label for="trackName">Song name</label>
@@ -169,7 +242,8 @@
                 </div>
             </div>
             <button id="publishBtn" onclick="publishToLrclib()">Upload to LRCLIB</button>
-            <div id="publishStatus" class="status"></div>
+            <button id="retryBtn" class="download-btn" style="display:none;" onclick="retryLookup()">Check again for ID</button>
+            <div id="publishStatus" class="status" role="status"></div>
         </div>
     </div>
 
