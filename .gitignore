@@ -1,0 +1,11 @@
+__pycache__/
+.pytest_cache/
+*.pyc
+
+# Local ffmpeg build (download from https://www.gyan.dev/ffmpeg/builds/)
+ffmpeg-*-essentials_build/
+ffmpeg.zip
+
+# Temp downloads
+*.part
+*.mp4
