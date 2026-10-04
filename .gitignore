@@ -24,3 +24,6 @@ words*.json
 *.flac
 *.m4a
 *.ogg
+
+# Local launcher variants
+run_server_*.bat
