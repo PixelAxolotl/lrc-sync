@@ -150,12 +150,17 @@ def _load_whisper_model(name: str):
         print(f"Model '{name}' not found locally — downloading from Hugging Face...", flush=True)
     import threading, time
     stop = threading.Event()
+    prev_mb = -1.0
 
     def _report_size():
+        nonlocal prev_mb
         while not stop.wait(2.0):
             try:
                 mb = sum(f.stat().st_size for f in _LOCAL_MODELS_DIR.rglob("*") if f.is_file()) / 1e6
-                print(f"  downloaded {mb:.1f} MB total in whisper_models so far...", flush=True)
+                if mb > prev_mb + 0.5:  # only print when it actually grows
+                    delta = mb if prev_mb < 0 else mb - prev_mb
+                    print(f"  downloaded {delta:.1f} MB (total in whisper_models: {mb:.1f} MB)...", flush=True)
+                    prev_mb = mb
             except Exception:
                 pass
 
