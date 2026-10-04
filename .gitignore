@@ -12,6 +12,8 @@ ffmpeg.zip
 
 # Local Whisper model weights (large binary files, not tracked)
 whisper_models/
+temp/
+cache_audio/
 
 # Local test inputs/outputs (never commit lyrics, audio, or results)
 *.lrc

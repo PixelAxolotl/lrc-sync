@@ -8,6 +8,10 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 
+PROJECT_DIR = Path(__file__).parent
+DEFAULT_TEMP_DIR = PROJECT_DIR / "temp"
+AUDIO_CACHE_DIR = PROJECT_DIR / "cache_audio"
+
 
 def _find_ffmpeg() -> Optional[str]:
     """Find ffmpeg executable. Returns path or None."""
@@ -39,9 +43,20 @@ def download_audio(url: str, output_dir: Optional[str] = None, progress_callback
         Path to the downloaded audio file
     """
     import yt_dlp
+    import hashlib
 
     if output_dir is None:
-        output_dir = tempfile.gettempdir()
+        output_dir = str(DEFAULT_TEMP_DIR)
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    AUDIO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Cache by URL: if we already downloaded this song, reuse the cached copy
+    url_key = hashlib.sha1(url.encode("utf-8")).hexdigest()[:16]
+    cache_path = AUDIO_CACHE_DIR / f"{url_key}.mp3"
+    if cache_path.exists():
+        out = Path(output_dir) / f"{url_key}.mp3"
+        shutil.copy2(cache_path, out)
+        return str(out)
 
     outtmpl = str(Path(output_dir) / "%(title)s.%(ext)s")
 
@@ -92,11 +107,15 @@ def download_audio(url: str, output_dir: Optional[str] = None, progress_callback
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
-        # yt-dlp returns the actual file path in the info dict
         if "requested_downloads" in info and info["requested_downloads"]:
-            return info["requested_downloads"][0]["filepath"]
-        # Fallback: construct the path
-        filename = ydl.prepare_filename(info)
-        # The postprocessor changes the extension to .mp3
-        base = Path(filename).with_suffix("")
-        return str(base) + ".mp3"
+            result = info["requested_downloads"][0]["filepath"]
+        else:
+            filename = ydl.prepare_filename(info)
+            base = Path(filename).with_suffix("")
+            result = str(base) + ".mp3"
+        # Store a persistent copy in the project cache for future requests
+        try:
+            shutil.copy2(result, cache_path)
+        except Exception:
+            pass
+        return result

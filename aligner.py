@@ -6,6 +6,9 @@ import os
 import re
 import subprocess
 import tempfile
+
+# Prefer the HF mirror so downloads work where huggingface.co is flaky
+os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -135,6 +138,26 @@ def detect_language_from_text(text: str) -> Optional[str]:
     return None
 
 
+def _load_whisper_model(name: str):
+    """Load a faster-whisper model; fall back to ModelScope if HF fails."""
+    from faster_whisper import WhisperModel
+    common = dict(device="cpu", compute_type="int8",
+                  download_root=str(_LOCAL_MODELS_DIR))
+    try:
+        return WhisperModel(_model_source(name), **common)
+    except Exception:
+        pass
+    try:
+        from modelscope.hub.snapshot_download import snapshot_download
+        local = snapshot_download(f"Systran/faster-whisper-{name}",
+                                  cache_dir=str(_LOCAL_MODELS_DIR))
+        return WhisperModel(local, device="cpu", compute_type="int8")
+    except Exception:
+        raise RuntimeError(
+            f"Could not obtain faster-whisper model '{name}' from "
+            "HF (mirror) or ModelScope. Pre-download it into whisper_models/.")
+
+
 def detect_language_tiny(wav_path: str) -> tuple[str, float]:
     """Detect audio language with a tiny CPU model (fast), for auto mode."""
     global _tiny_model
@@ -142,9 +165,7 @@ def detect_language_tiny(wav_path: str) -> tuple[str, float]:
     from faster_whisper.audio import decode_audio
 
     if _tiny_model is None:
-        _tiny_model = WhisperModel(_model_source("tiny"), device="cpu",
-                                   compute_type="int8",
-                                   download_root=str(_LOCAL_MODELS_DIR))
+        _tiny_model = _load_whisper_model("tiny")
     audio = decode_audio(wav_path, sampling_rate=16000)
     language, probability, _ = _tiny_model.detect_language(audio)
     return language, probability
@@ -165,9 +186,7 @@ def transcribe_with_whisper(
     if progress_callback:
         progress_callback("loading_model", 0, "Loading Whisper model (downloads on first run)...")
 
-    model = WhisperModel(_model_source(model_size), device="cpu",
-                         compute_type="int8",
-                         download_root=str(_LOCAL_MODELS_DIR))
+    model = _load_whisper_model(model_size)
 
     if progress_callback:
         progress_callback("transcribing", 0, "Transcribing...")
