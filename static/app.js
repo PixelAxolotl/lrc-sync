@@ -78,6 +78,26 @@ if (hfTokenBox) {
 const lyricsBox = document.getElementById("lyrics");
 if (lyricsBox) lyricsBox.addEventListener("input", resetLanguageDropdown);
 
+async function submitHfToken(withToken) {
+    const ov = document.getElementById("tokenOverlay");
+    const input = document.getElementById("tokenInput");
+    const token = withToken && input ? input.value.trim() : "";
+    try {
+        const fd = new FormData();
+        fd.append("token", token);
+        await fetch("/api/token", { method: "POST", body: fd });
+    } catch (e) {}
+    if (ov) ov.style.display = "none";
+    window._tokenModalShown = false;
+    if (!withToken) {
+        const cancelBtn = document.getElementById("cancelBtn");
+        if (cancelBtn) cancelBtn.style.display = "none";
+        const error = document.getElementById("error");
+        if (error) error.textContent = "Continuing without HF token — download may fail for gated models.";
+        try { if (lastJobId) await fetch(`/api/jobs/${lastJobId}/cancel`, { method: "POST" }); } catch (e) {}
+    }
+}
+
 async function cancelJob() {
     const cancelBtn = document.getElementById("cancelBtn");
     if (!lastJobId) return;
@@ -142,9 +162,6 @@ async function align() {
     formData.append("beam_size", beamSize);
     formData.append("best_of", bestOf);
 
-    const hfToken = document.getElementById("hfToken");
-    formData.append("hf_token", hfToken ? hfToken.value.trim() : "");
-
     try {
         // Start job
         let response = await fetch("/api/jobs", {
@@ -180,24 +197,13 @@ async function align() {
                 if (cancelBtn) cancelBtn.style.display = "none";
                 return;
             }
-                    if (job.need_token) {
-                const tok = document.getElementById("hfToken") ? document.getElementById("hfToken").value.trim() : "";
-                try {
-                    const fd = new FormData();
-                    fd.append("token", tok);
-                    await fetch("/api/token", { method: "POST", body: fd });
-                } catch (e) {}
-                if (!tok) {
-                    status.textContent = "";
-                    error.textContent = `Model "${job.need_token}" is not downloaded. Enter an HF token in the "HF Token" field under Advanced, then click Generate again.`;
-                    hideProgress();
-                    btn.disabled = false;
-                    const cancelBtn = document.getElementById("cancelBtn");
-                    if (cancelBtn) cancelBtn.style.display = "none";
-                    try { await fetch(`/api/jobs/${job_id}/cancel`, { method: "POST" }); } catch (e) {}
-                    return;
-                }
-                // token submitted — the waiting worker continues with it
+                    if (job.need_token && !window._tokenModalShown) {
+                window._tokenModalShown = true;
+                const ov = document.getElementById("tokenOverlay");
+                const msg = document.getElementById("tokenMsg");
+                if (msg) msg.textContent = `Model "${job.need_token}" is not downloaded. Enter an HF token to continue, or continue without one.`;
+                if (ov) ov.style.display = "flex";
+                return;
             }
             if (job.detected_language) {
                 const langSelect = document.getElementById("language");

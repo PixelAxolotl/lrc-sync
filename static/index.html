@@ -254,14 +254,19 @@
                     </div>
                     <div></div>
                 </div>
-                <div class="row">
-                    <div>
-                        <label for="hfToken">HF Token <span class="hint">(optional — needed for new model downloads)</span></label>
-                        <input type="password" id="hfToken" placeholder="hf_...">
-                    </div>
-                    <div></div>
+        </div>
+        <div id="tokenOverlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:100; align-items:center; justify-content:center;">
+            <div class="card" style="max-width:420px; width:92%; margin:auto; margin-top:12vh;">
+                <h2>HF Token needed</h2>
+                <p id="tokenMsg" class="hint" style="margin-bottom:0.75rem;"></p>
+                <label for="tokenInput">Hugging Face token</label>
+                <input type="password" id="tokenInput" placeholder="hf_..." autocomplete="off">
+                <div style="display:flex; gap:0.5rem; margin-top:1rem;">
+                    <button onclick="submitHfToken(true)">Continue</button>
+                    <button class="download-btn" onclick="submitHfToken(false)">Continue without token</button>
                 </div>
             </div>
+        </div>
             <br><br>
             <button id="alignBtn" onclick="align()">Generate LRC</button>
             <button id="cancelBtn" class="download-btn" style="display:none; margin-top:0.5rem;" onclick="cancelJob()">Cancel</button>

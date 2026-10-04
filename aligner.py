@@ -139,7 +139,7 @@ def detect_language_from_text(text: str) -> Optional[str]:
     return None
 
 
-def _load_whisper_model(name: str):
+def _load_whisper_model(name: str, progress_callback=None):
     """Load a faster-whisper model; fall back to ModelScope if HF fails."""
     from faster_whisper import WhisperModel
     common = dict(device="cpu", compute_type="int8",
@@ -149,6 +149,8 @@ def _load_whisper_model(name: str):
     download_needed = not (Path(_model_source(name)).exists() or local.exists()) and not _already_downloaded(name)
     if download_needed:
         _maybe_prompt_for_hf_token(name)
+        if progress_callback:
+            progress_callback("downloading", 0, f"Downloading '{name}' from Hugging Face...")
     if download_needed:
         print(f"Model '{name}' not found locally — downloading from Hugging Face...", flush=True)
     import threading, time
@@ -163,6 +165,8 @@ def _load_whisper_model(name: str):
                 if mb > prev_mb + 0.5:  # only print when it actually grows
                     delta = mb if prev_mb < 0 else mb - prev_mb
                     print(f"  downloaded {delta:.1f} MB (total in whisper_models: {mb:.1f} MB)...", flush=True)
+                    if progress_callback:
+                        progress_callback("downloading", 0, f"Downloading '{name}'… {mb:.0f} MB received")
                     prev_mb = mb
             except Exception:
                 pass
@@ -271,7 +275,7 @@ def transcribe_with_whisper(
     if progress_callback:
         progress_callback("loading_model", 0, "Loading Whisper model (downloads on first run)...")
 
-    model = _load_whisper_model(model_size)
+    model = _load_whisper_model(model_size, progress_callback=progress_callback)
 
     if progress_callback:
         progress_callback("transcribing", 0, "Transcribing...")
