@@ -76,7 +76,17 @@ def convert_to_wav(audio_path: str, output_path: Optional[str] = None) -> str:
     return output_path
 
 
+_LOCAL_MODELS_DIR = Path(__file__).parent / "whisper_models"
+
 _tiny_model = None
+
+
+def _model_source(model_size: str) -> str:
+    """Prefer a local model folder if it exists, else download into it."""
+    local = _LOCAL_MODELS_DIR / model_size
+    if local.exists():
+        return str(local)
+    return model_size
 
 def detect_language_from_text(text: str) -> Optional[str]:
     """Fast Unicode-script heuristic. Returns a language code only when the
@@ -132,7 +142,9 @@ def detect_language_tiny(wav_path: str) -> tuple[str, float]:
     from faster_whisper.audio import decode_audio
 
     if _tiny_model is None:
-        _tiny_model = WhisperModel("tiny", device="cpu", compute_type="int8")
+        _tiny_model = WhisperModel(_model_source("tiny"), device="cpu",
+                                   compute_type="int8",
+                                   download_root=str(_LOCAL_MODELS_DIR))
     audio = decode_audio(wav_path, sampling_rate=16000)
     language, probability, _ = _tiny_model.detect_language(audio)
     return language, probability
@@ -153,7 +165,9 @@ def transcribe_with_whisper(
     if progress_callback:
         progress_callback("loading_model", 0, "Loading Whisper model (downloads on first run)...")
 
-    model = WhisperModel(model_size, device="cpu", compute_type="int8")
+    model = WhisperModel(_model_source(model_size), device="cpu",
+                         compute_type="int8",
+                         download_root=str(_LOCAL_MODELS_DIR))
 
     if progress_callback:
         progress_callback("transcribing", 0, "Transcribing...")

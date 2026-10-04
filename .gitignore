@@ -10,6 +10,9 @@ ffmpeg.zip
 *.part
 *.mp4
 
+# Local Whisper model weights (large binary files, not tracked)
+whisper_models/
+
 # Local test inputs/outputs (never commit lyrics, audio, or results)
 *.lrc
 lyrics*.txt
