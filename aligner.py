@@ -149,18 +149,17 @@ def _load_whisper_model(name: str):
     if not (Path(_model_source(name))).exists() or not local.exists():
         print(f"Model '{name}' not found locally — downloading from Hugging Face...", flush=True)
     import threading, time
-    local_dir = _LOCAL_MODELS_DIR / name
     stop = threading.Event()
 
     def _report_size():
         while not stop.wait(2.0):
             try:
-                mb = sum(f.stat().st_size for f in local_dir.rglob("*") if f.is_file()) / 1e6
-                print(f"  downloaded {mb:.1f} MB so far...", flush=True)
+                mb = sum(f.stat().st_size for f in _LOCAL_MODELS_DIR.rglob("*") if f.is_file()) / 1e6
+                print(f"  downloaded {mb:.1f} MB total in whisper_models so far...", flush=True)
             except Exception:
                 pass
 
-    if not local_dir.exists() or not any(local_dir.rglob("*")):
+    if not (name and (_LOCAL_MODELS_DIR / name).exists() and any((_LOCAL_MODELS_DIR / name).rglob('*'))):
         t = threading.Thread(target=_report_size, daemon=True)
         t.start()
 
