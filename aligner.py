@@ -44,20 +44,8 @@ class AlignmentResult:
 
 def _find_ffmpeg() -> Optional[str]:
     """Find ffmpeg executable. Returns path or None."""
-    import shutil
-    # Check PATH first
-    ffmpeg_in_path = shutil.which("ffmpeg")
-    if ffmpeg_in_path:
-        return ffmpeg_in_path
-
-    # Check local project directory
-    project_dir = Path(__file__).parent
-    for pattern in ["ffmpeg-*/bin/ffmpeg.exe", "ffmpeg-*/bin/ffmpeg"]:
-        matches = list(project_dir.glob(pattern))
-        if matches:
-            return str(matches[0])
-
-    return None
+    from ffmpeg_setup import find_ffmpeg
+    return find_ffmpeg()
 
 
 def convert_to_wav(audio_path: str, output_path: Optional[str] = None) -> str:
@@ -65,9 +53,11 @@ def convert_to_wav(audio_path: str, output_path: Optional[str] = None) -> str:
     if output_path is None:
         output_path = tempfile.mktemp(suffix=".wav")
 
-    ffmpeg = _find_ffmpeg()
-    if not ffmpeg:
-        raise RuntimeError("ffmpeg not found. Please install ffmpeg or place it in the project directory.")
+    from ffmpeg_setup import ensure_ffmpeg
+    try:
+        ffmpeg = ensure_ffmpeg()
+    except RuntimeError as e:
+        raise RuntimeError(str(e))
 
     cmd = [
         ffmpeg, "-y", "-i", audio_path,

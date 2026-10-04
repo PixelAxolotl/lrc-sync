@@ -15,19 +15,8 @@ AUDIO_CACHE_DIR = PROJECT_DIR / "cache_audio"
 
 def _find_ffmpeg() -> Optional[str]:
     """Find ffmpeg executable. Returns path or None."""
-    # Check PATH first
-    ffmpeg_in_path = shutil.which("ffmpeg")
-    if ffmpeg_in_path:
-        return ffmpeg_in_path
-
-    # Check local project directory
-    project_dir = Path(__file__).parent
-    for pattern in ["ffmpeg-*/bin/ffmpeg.exe", "ffmpeg-*/bin/ffmpeg"]:
-        matches = list(project_dir.glob(pattern))
-        if matches:
-            return str(matches[0])
-
-    return None
+    from ffmpeg_setup import find_ffmpeg
+    return find_ffmpeg()
 
 
 def download_audio(url: str, output_dir: Optional[str] = None, progress_callback=None) -> str:
@@ -100,8 +89,12 @@ def download_audio(url: str, output_dir: Optional[str] = None, progress_callback
         "postprocessor_hooks": [_pp_hook],
     }
 
-    # Provide ffmpeg location if not in PATH
-    ffmpeg_path = _find_ffmpeg()
+    # Provide ffmpeg location if not in PATH (auto-download if missing)
+    try:
+        from ffmpeg_setup import ensure_ffmpeg
+        ffmpeg_path = ensure_ffmpeg()
+    except RuntimeError:
+        ffmpeg_path = _find_ffmpeg()
     if ffmpeg_path:
         ydl_opts["ffmpeg_location"] = str(Path(ffmpeg_path).parent)
 
