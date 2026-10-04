@@ -49,6 +49,32 @@ job_sync: dict = {}
 # When False (default), words.json / output_sync.json outputs are disabled
 CHARACTER_LEVEL = False
 
+# Web UI HF-token prompt coordination
+_ui_token = {"evt": None, "token": "", "model": None}
+_current_job_id = None
+
+
+def _ui_token_provider(model_name):
+    global _ui_token, _current_job_id
+    if _ui_token["evt"] is not None:
+        _ui_token["evt"].set()
+        _ui_token["evt"] = None
+    evt = threading.Event()
+    _ui_token = {"evt": evt, "token": "", "model": model_name}
+    with jobs_lock:
+        job = jobs.get(_current_job_id)
+        if job is not None:
+            job["need_token"] = model_name
+    print(f"Waiting for HF token via web UI (model={model_name})...", flush=True)
+    evt.wait(timeout=900)
+    with jobs_lock:
+        job = jobs.get(_current_job_id)
+        if job is not None:
+            job.pop("need_token", None)
+    token = _ui_token.get("token", "")
+    _ui_token = {"evt": None, "token": "", "model": None}
+    return token
+
 # Cancel events per running job
 job_cancel: dict = {}
 
@@ -77,6 +103,9 @@ def _run_job(
     best_of: int = 5,
 ):
     """Background worker: download (if URL) + align, storing progress."""
+    global _current_job_id
+    _current_job_id = job_id
+
     def cb(stage, percent, message):
         if job_cancel.get(job_id) and job_cancel[job_id].is_set():
             raise RuntimeError("Cancelled")
@@ -180,6 +209,9 @@ async def create_job(
         }
         job_cancel[job_id] = threading.Event()
 
+    import aligner
+    aligner.TOKEN_PROVIDER = _ui_token_provider
+
     cleanup_paths = []
     audio_path = None
     if audio is not None and audio.filename:
@@ -222,6 +254,17 @@ async def get_job(job_id: str):
             from fastapi.responses import JSONResponse
             return JSONResponse(status_code=404, content={"error": "Unknown job"})
         return dict(job, character_level=CHARACTER_LEVEL)
+
+
+@app.post("/api/token")
+async def submit_token(token: str = Form(...)):
+    global _ui_token
+    if _ui_token.get("evt") is None:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=400, content={"error": "No pending token request"})
+    _ui_token["token"] = (token or "").strip()
+    _ui_token["evt"].set()
+    return {"status": "ok"}
 
 
 @app.post("/api/jobs/{job_id}/cancel")

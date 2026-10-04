@@ -147,6 +147,7 @@ async function align() {
             throw new Error(errData.error || `Server error: ${response.status}`);
         }
         const { job_id } = await response.json();
+        window._tokenAskedForJob = false;
         lastJobId = job_id;
         const cancelBtn = document.getElementById("cancelBtn");
         if (cancelBtn) cancelBtn.style.display = "block";
@@ -170,7 +171,18 @@ async function align() {
                 if (cancelBtn) cancelBtn.style.display = "none";
                 return;
             }
-                    if (job.detected_language) {
+                    if (job.need_token && !window._tokenAskedForJob) {
+                window._tokenAskedForJob = true;
+                const tok = window.prompt(
+                    `Model "${job.need_token}" needs to be downloaded. Enter an HF token to continue (Cancel to skip):`
+                );
+                try {
+                    const fd = new FormData();
+                    fd.append("token", tok || "");
+                    await fetch("/api/token", { method: "POST", body: fd });
+                } catch (e) { /* best effort */ }
+            }
+            if (job.detected_language) {
                 const langSelect = document.getElementById("language");
                 if (langSelect) {
                     const autoOpt = Array.from(langSelect.options).find(o => o.value === "" || o.dataset.detectedApplied);
