@@ -11,6 +11,31 @@ PUBLISH_URL = "https://lrclib.net/api/publish"
 CHALLENGE_URL = "https://lrclib.net/api/request-challenge"
 USER_AGENT = "lrc-sync/1.0"
 
+_MAX_ATTEMPTS = 3
+_BACKOFF_BASE = 1.0
+
+
+def _urlopen_with_retries(req, timeout=30, action="request"):
+    """Open a URL, retrying transient network failures with exponential backoff."""
+    import time
+    import urllib.error
+    import urllib.request
+
+    last_err = None
+    for attempt in range(1, _MAX_ATTEMPTS + 1):
+        try:
+            return urllib.request.urlopen(req, timeout=timeout)
+        except urllib.error.HTTPError:
+            # HTTP error responses (4xx/5xx) are not transient connection issues
+            raise
+        except Exception as e:
+            last_err = e
+            if attempt < _MAX_ATTEMPTS:
+                time.sleep(_BACKOFF_BASE * (2 ** (attempt - 1)))
+    raise RuntimeError(
+        f"LRCLIB {action} failed after {_MAX_ATTEMPTS} attempts: {last_err}"
+    )
+
 
 def strip_timestamps(lrc_text: str) -> str:
     """Remove [mm:ss.xx] tags to produce plain lyrics."""
@@ -37,8 +62,10 @@ def request_challenge() -> dict:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with _urlopen_with_retries(req, action="challenge request") as resp:
             return json.loads(resp.read().decode("utf-8"))
+    except RuntimeError:
+        raise
     except Exception as e:
         raise RuntimeError(f"LRCLIB challenge request failed: {e}")
 
@@ -126,7 +153,7 @@ def publish_lrc(
     )
 
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with _urlopen_with_retries(req, action="publish") as resp:
             body = resp.read().decode("utf-8").strip()
             if not body:
                 # LRCLIB returns 2xx with an empty body on success
@@ -138,6 +165,8 @@ def publish_lrc(
         except Exception:
             detail = ""
         raise RuntimeError(f"LRCLIB publish failed: HTTP {e.code} {detail}")
+    except RuntimeError:
+        raise
     except Exception as e:
         raise RuntimeError(f"LRCLIB publish failed: {e}")
 
@@ -161,11 +190,13 @@ def lookup_record(artist_name: str, track_name: str, duration: float) -> Optiona
         headers={"User-Agent": USER_AGENT},
     )
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with _urlopen_with_retries(req, action="lookup") as resp:
             return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         if e.code == 404:
             return None
         raise RuntimeError(f"LRCLIB lookup failed: HTTP {e.code}")
+    except RuntimeError:
+        raise
     except Exception as e:
         raise RuntimeError(f"LRCLIB lookup failed: {e}")
