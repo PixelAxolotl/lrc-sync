@@ -146,7 +146,10 @@ def _load_whisper_model(name: str):
                   download_root=str(_LOCAL_MODELS_DIR))
     print(f"Loading faster-whisper model '{name}' (CPU/int8)...", flush=True)
     local = _LOCAL_MODELS_DIR / name
-    if not (Path(_model_source(name))).exists() or not local.exists():
+    download_needed = not (Path(_model_source(name)).exists() or local.exists()) and not _already_downloaded(name)
+    if download_needed:
+        _maybe_prompt_for_hf_token(name)
+    if download_needed:
         print(f"Model '{name}' not found locally — downloading from Hugging Face...", flush=True)
     import threading, time
     stop = threading.Event()
@@ -188,6 +191,39 @@ def _load_whisper_model(name: str):
         raise RuntimeError(
             f"Could not obtain faster-whisper model '{name}' from "
             "HF (mirror) or ModelScope. Pre-download it into whisper_models/.")
+
+
+def _already_downloaded(name: str) -> bool:
+    for child in _LOCAL_MODELS_DIR.iterdir():
+        if child.is_dir() and name.lower() in child.name.lower():
+            return True
+    return False
+
+
+def _maybe_prompt_for_hf_token(name: str):
+    """Ask for an HF token when a model still needs downloading (CLI only)."""
+    if _already_downloaded(name):
+        return
+    if os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN"):
+        return
+    print(
+        f"Model '{name}' is not downloaded yet. Hugging Face may require an access token.\n"
+        "Paste an HF token to use, or press Enter / 'n' to continue without one.",
+        flush=True,
+    )
+    try:
+        import sys
+        if not sys.stdin.isatty():
+            print("No interactive terminal detected; proceeding without a token.", flush=True)
+            return
+        token = input("HF token (or Enter / n to skip): ").strip()
+    except (EOFError, OSError):
+        return
+    if token and token.lower() not in ("n", "no", "skip"):
+        os.environ["HF_TOKEN"] = token
+        print("HF_TOKEN set for this session.", flush=True)
+    else:
+        print("Continuing without a token.", flush=True)
 
 
 def detect_language_tiny(wav_path: str) -> tuple[str, float]:
