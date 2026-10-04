@@ -143,15 +143,21 @@ def _load_whisper_model(name: str):
     from faster_whisper import WhisperModel
     common = dict(device="cpu", compute_type="int8",
                   download_root=str(_LOCAL_MODELS_DIR))
+    print(f"Loading faster-whisper model '{name}' (CPU/int8)...", flush=True)
     try:
-        return WhisperModel(_model_source(name), **common)
-    except Exception:
-        pass
+        model = WhisperModel(_model_source(name), **common)
+        print(f"Model '{name}' ready.", flush=True)
+        return model
+    except Exception as e:
+        print(f"HF download/load failed for '{name}' ({e}). Trying ModelScope...", flush=True)
     try:
         from modelscope.hub.snapshot_download import snapshot_download
+        print(f"Downloading '{name}' from ModelScope...", flush=True)
         local = snapshot_download(f"Systran/faster-whisper-{name}",
                                   cache_dir=str(_LOCAL_MODELS_DIR))
-        return WhisperModel(local, device="cpu", compute_type="int8")
+        model = WhisperModel(local, device="cpu", compute_type="int8")
+        print(f"Model '{name}' ready (from ModelScope).", flush=True)
+        return model
     except Exception:
         raise RuntimeError(
             f"Could not obtain faster-whisper model '{name}' from "
