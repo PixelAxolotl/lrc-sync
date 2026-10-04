@@ -194,9 +194,15 @@ def _load_whisper_model(name: str):
 
 
 def _already_downloaded(name: str) -> bool:
-    for child in _LOCAL_MODELS_DIR.iterdir():
-        if child.is_dir() and name.lower() in child.name.lower():
-            return True
+    try:
+        if not _LOCAL_MODELS_DIR.exists():
+            _LOCAL_MODELS_DIR.mkdir(parents=True, exist_ok=True)
+            return False
+        for child in _LOCAL_MODELS_DIR.iterdir():
+            if child.is_dir() and name.lower() in child.name.lower():
+                return True
+    except Exception:
+        return False
     return False
 
 
