@@ -144,6 +144,9 @@ def _load_whisper_model(name: str):
     common = dict(device="cpu", compute_type="int8",
                   download_root=str(_LOCAL_MODELS_DIR))
     print(f"Loading faster-whisper model '{name}' (CPU/int8)...", flush=True)
+    local = _LOCAL_MODELS_DIR / name
+    if not (Path(_model_source(name))).exists() or not local.exists():
+        print(f"Model '{name}' not found locally — downloading from Hugging Face...", flush=True)
     try:
         model = WhisperModel(_model_source(name), **common)
         print(f"Model '{name}' ready.", flush=True)
