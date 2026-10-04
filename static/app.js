@@ -57,6 +57,21 @@ function showTab(name) {
     document.getElementById('tabAdvanced').classList.toggle('active', !main);
 }
 
+function resetLanguageDropdown() {
+    const langSelect = document.getElementById("language");
+    if (!langSelect) return;
+    const autoOpt = Array.from(langSelect.options).find(o => o.dataset.detectedApplied);
+    if (autoOpt) {
+        autoOpt.text = autoOpt.dataset.originalText || "Auto-detect";
+        autoOpt.value = "";
+        delete autoOpt.dataset.detectedApplied;
+    }
+    langSelect.value = "";
+}
+
+const lyricsBox = document.getElementById("lyrics");
+if (lyricsBox) lyricsBox.addEventListener("input", resetLanguageDropdown);
+
 async function cancelJob() {
     const cancelBtn = document.getElementById("cancelBtn");
     if (!lastJobId) return;
@@ -155,12 +170,13 @@ async function align() {
                 if (cancelBtn) cancelBtn.style.display = "none";
                 return;
             }
-            if (job.detected_language) {
+                    if (job.detected_language) {
                 const langSelect = document.getElementById("language");
                 if (langSelect) {
                     const autoOpt = Array.from(langSelect.options).find(o => o.value === "" || o.dataset.detectedApplied);
                     if (autoOpt && !autoOpt.dataset.detectedApplied) {
                         const detectedOpt = Array.from(langSelect.options).find(o => o.value === job.detected_language);
+                        if (!autoOpt.dataset.originalText) autoOpt.dataset.originalText = autoOpt.text;
                         autoOpt.text = (detectedOpt ? detectedOpt.text : job.detected_language) + " (Detected)";
                         autoOpt.value = job.detected_language;
                         autoOpt.dataset.detectedApplied = "1";
