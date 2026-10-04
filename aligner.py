@@ -226,16 +226,16 @@ def _maybe_prompt_for_hf_token(name: str):
     )
     try:
         import sys
-        if not sys.stdin.isatty():
-            if TOKEN_PROVIDER is not None:
-                token = TOKEN_PROVIDER(name).strip()
-                if token and token.lower() not in ("n", "no", "skip"):
-                    os.environ["HF_TOKEN"] = token
-                    print("HF_TOKEN set from web UI.", flush=True)
-                else:
-                    print("User chose to continue without a token.", flush=True)
+        if TOKEN_PROVIDER is not None:
+            token = TOKEN_PROVIDER(name).strip()
+            if token and token.lower() not in ("n", "no", "skip"):
+                os.environ["HF_TOKEN"] = token
+                print("HF_TOKEN set from web UI.", flush=True)
             else:
-                print("No interactive terminal detected; proceeding without a token.", flush=True)
+                print("User chose to continue without a token.", flush=True)
+            return
+        if not sys.stdin.isatty():
+            print("No interactive terminal detected; proceeding without a token.", flush=True)
             return
         token = input("HF token (or Enter / n to skip): ").strip()
     except (EOFError, OSError):
