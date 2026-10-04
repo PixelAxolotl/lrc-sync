@@ -9,6 +9,7 @@ import tempfile
 
 # Prefer the HF mirror so downloads work where huggingface.co is flaky
 os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "0"
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -147,12 +148,30 @@ def _load_whisper_model(name: str):
     local = _LOCAL_MODELS_DIR / name
     if not (Path(_model_source(name))).exists() or not local.exists():
         print(f"Model '{name}' not found locally — downloading from Hugging Face...", flush=True)
+    import threading, time
+    local_dir = _LOCAL_MODELS_DIR / name
+    stop = threading.Event()
+
+    def _report_size():
+        while not stop.wait(2.0):
+            try:
+                mb = sum(f.stat().st_size for f in local_dir.rglob("*") if f.is_file()) / 1e6
+                print(f"  downloaded {mb:.1f} MB so far...", flush=True)
+            except Exception:
+                pass
+
+    if not local_dir.exists() or not any(local_dir.rglob("*")):
+        t = threading.Thread(target=_report_size, daemon=True)
+        t.start()
+
     try:
         model = WhisperModel(_model_source(name), **common)
         print(f"Model '{name}' ready.", flush=True)
         return model
     except Exception as e:
         print(f"HF download/load failed for '{name}' ({e}). Trying ModelScope...", flush=True)
+    finally:
+        stop.set()
     try:
         from modelscope.hub.snapshot_download import snapshot_download
         print(f"Downloading '{name}' from ModelScope...", flush=True)
