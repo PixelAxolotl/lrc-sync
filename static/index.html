@@ -255,18 +255,6 @@
                     <div></div>
                 </div>
         </div>
-        <div id="tokenOverlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:100; align-items:center; justify-content:center;">
-            <div class="card" style="max-width:420px; width:92%; margin:auto; margin-top:12vh;">
-                <h2>HF Token needed</h2>
-                <p id="tokenMsg" class="hint" style="margin-bottom:0.75rem;"></p>
-                <label for="tokenInput">Hugging Face token</label>
-                <input type="password" id="tokenInput" placeholder="hf_..." autocomplete="off">
-                <div style="display:flex; gap:0.5rem; margin-top:1rem;">
-                    <button onclick="submitHfToken(true)">Continue</button>
-                    <button class="download-btn" onclick="submitHfToken(false)">Continue without token</button>
-                </div>
-            </div>
-        </div>
             <br><br>
             <button id="alignBtn" onclick="align()">Generate LRC</button>
             <button id="cancelBtn" class="download-btn" style="display:none; margin-top:0.5rem;" onclick="cancelJob()">Cancel</button>
@@ -278,6 +266,19 @@
             </div>
             <div id="status" class="status" role="status"></div>
             <div id="error" class="error" role="alert"></div>
+        </div>
+
+        <div id="tokenOverlay" style="display:none; position:fixed; inset:0; background:rgba(6,10,24,0.72); z-index:100; align-items:center; justify-content:center; backdrop-filter: blur(3px);">
+            <div class="card" style="max-width:440px; width:92%; margin:auto; margin-top:10vh; border:1px solid var(--field-border); box-shadow:0 20px 48px rgba(0,0,0,0.55);">
+                <h2 style="margin-bottom:0.35rem;">HF Token needed</h2>
+                <p id="tokenMsg" class="hint" style="margin-bottom:0.9rem;"></p>
+                <label for="tokenInput">Hugging Face token</label>
+                <input type="password" id="tokenInput" placeholder="hf_..." autocomplete="off">
+                <div style="display:flex; gap:0.6rem; margin-top:1.1rem;">
+                    <button class="download-btn" style="flex:1; margin-top:0;" onclick="submitHfToken(false)">Continue without token</button>
+                    <button style="flex:1;" onclick="submitHfToken(true)">Continue</button>
+                </div>
+            </div>
         </div>
 
         <div class="card result" id="resultCard">
