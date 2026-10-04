@@ -7,5 +7,5 @@ cd /d "%~dp0"
 where python >nul 2>nul
 if errorlevel 1 exit /b 1
 
-start "" /min python server.py --characterlevel %*
+start "" /min python server.py %*
 exit /b 0
