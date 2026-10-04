@@ -30,3 +30,5 @@ run_server_*.bat
 
 # Local tests (not tracked)
 test/
+
+pytest.ini
