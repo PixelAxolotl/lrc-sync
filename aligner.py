@@ -180,21 +180,12 @@ def _load_whisper_model(name: str, progress_callback=None):
         print(f"Model '{name}' ready.", flush=True)
         return model
     except Exception as e:
-        print(f"HF download/load failed for '{name}' ({e}). Trying ModelScope...", flush=True)
+        print(f"HF download/load failed for '{name}' ({e}).", flush=True)
     finally:
         stop.set()
-    try:
-        from modelscope.hub.snapshot_download import snapshot_download
-        print(f"Downloading '{name}' from ModelScope...", flush=True)
-        local = snapshot_download(f"Systran/faster-whisper-{name}",
-                                  cache_dir=str(_LOCAL_MODELS_DIR))
-        model = WhisperModel(local, device="cpu", compute_type="int8")
-        print(f"Model '{name}' ready (from ModelScope).", flush=True)
-        return model
-    except Exception:
-        raise RuntimeError(
-            f"Could not obtain faster-whisper model '{name}' from "
-            "HF (mirror) or ModelScope. Pre-download it into whisper_models/.")
+    raise RuntimeError(
+        f"Could not obtain faster-whisper model '{name}' from HF (mirror). "
+        "Pre-download it into whisper_models/.")
 
 
 def _already_downloaded(name: str) -> bool:
