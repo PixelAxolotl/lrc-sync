@@ -27,3 +27,6 @@ words*.json
 
 # Local launcher variants
 run_server_*.bat
+
+# Local tests (not tracked)
+test/
