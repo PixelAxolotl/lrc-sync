@@ -240,7 +240,7 @@
                 <div class="row">
                     <div class="tip-wrap">
                         <label for="temperature">Temperature <span class="hint" id="temperatureVal">0.0</span> <span class="tip" data-tip="Sampling temperature: 0 = deterministic and safest for lyrics. Raise toward 1.0 only for more varied transcription; higher values risk more mistakes.">ⓘ</span></label>
-                        <input type="range" id="temperature" min="0" max="1" step="0.1" value="0" oninput="document.getElementById('temperatureVal').textContent=this.value">
+                        <input type="range" id="temperature" min="0" max="0.6" step="0.1" value="0" oninput="document.getElementById('temperatureVal').textContent=this.value">
                     </div>
                     <div class="tip-wrap">
                         <label for="beamSize">Beam size <span class="hint" id="beamSizeVal">5</span> <span class="tip" data-tip="Beam size: wider beam search = more accurate but slower. 5 is a good default; try 3 for speed or 8-10 for the slowest, most careful result.">ⓘ</span></label>
@@ -250,7 +250,7 @@
                 <div class="row">
                     <div class="tip-wrap">
                         <label for="bestOf">Best of <span class="hint" id="bestOfVal">5</span> <span class="tip" data-tip="Best of: number of candidates sampled before picking the best result. Pairs with temperature; raise both only for hard tracks, at the cost of speed.">ⓘ</span></label>
-                        <input type="range" id="bestOf" min="1" max="10" step="1" value="5" oninput="document.getElementById('bestOfVal').textContent=this.value">
+                        <input type="range" id="bestOf" min="1" max="5" step="1" value="5" oninput="document.getElementById('bestOfVal').textContent=this.value">
                     </div>
                     <div></div>
                 </div>
