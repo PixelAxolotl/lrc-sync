@@ -69,6 +69,12 @@ function resetLanguageDropdown() {
     langSelect.value = "";
 }
 
+const hfTokenBox = document.getElementById("hfToken");
+if (hfTokenBox) {
+    if (localStorage.getItem("hfToken")) hfTokenBox.value = localStorage.getItem("hfToken");
+    hfTokenBox.addEventListener("input", () => localStorage.setItem("hfToken", hfTokenBox.value));
+}
+
 const lyricsBox = document.getElementById("lyrics");
 if (lyricsBox) lyricsBox.addEventListener("input", resetLanguageDropdown);
 
@@ -136,6 +142,9 @@ async function align() {
     formData.append("beam_size", beamSize);
     formData.append("best_of", bestOf);
 
+    const hfToken = document.getElementById("hfToken");
+    formData.append("hf_token", hfToken ? hfToken.value.trim() : "");
+
     try {
         // Start job
         let response = await fetch("/api/jobs", {
@@ -171,16 +180,24 @@ async function align() {
                 if (cancelBtn) cancelBtn.style.display = "none";
                 return;
             }
-                    if (job.need_token && !window._tokenAskedForJob) {
-                window._tokenAskedForJob = true;
-                const tok = window.prompt(
-                    `Model "${job.need_token}" needs to be downloaded. Enter an HF token to continue (Cancel to skip):`
-                );
+                    if (job.need_token) {
+                const tok = document.getElementById("hfToken") ? document.getElementById("hfToken").value.trim() : "";
                 try {
                     const fd = new FormData();
-                    fd.append("token", tok || "");
+                    fd.append("token", tok);
                     await fetch("/api/token", { method: "POST", body: fd });
-                } catch (e) { /* best effort */ }
+                } catch (e) {}
+                if (!tok) {
+                    status.textContent = "";
+                    error.textContent = `Model "${job.need_token}" is not downloaded. Enter an HF token in the "HF Token" field under Advanced, then click Generate again.`;
+                    hideProgress();
+                    btn.disabled = false;
+                    const cancelBtn = document.getElementById("cancelBtn");
+                    if (cancelBtn) cancelBtn.style.display = "none";
+                    try { await fetch(`/api/jobs/${job_id}/cancel`, { method: "POST" }); } catch (e) {}
+                    return;
+                }
+                // token submitted — the waiting worker continues with it
             }
             if (job.detected_language) {
                 const langSelect = document.getElementById("language");

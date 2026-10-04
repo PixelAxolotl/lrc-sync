@@ -191,6 +191,7 @@ async def create_job(
     temperature: float = Form(0.0),
     beam_size: int = Form(5),
     best_of: int = Form(5),
+    hf_token: str = Form(None),
 ):
     """Start an alignment job. Returns {"job_id": ...} immediately."""
     if (audio is None or not audio.filename) and not url:
@@ -199,6 +200,10 @@ async def create_job(
             status_code=400,
             content={"error": "Provide an audio file or a YouTube URL."},
         )
+
+    if hf_token and hf_token.strip():
+        import os as _os
+        _os.environ["HF_TOKEN"] = hf_token.strip()
 
     job_id = uuid.uuid4().hex[:12]
     with jobs_lock:
