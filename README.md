@@ -164,6 +164,13 @@ weakest — they raise the floor rather than substitute for a bigger model.
   non-CJK behaviour and was not tested on English.
 - Roughly 24% of lines in a wider run had their text absent from the Whisper
   transcript entirely, which no matching change can recover.
+- A previously shipped end-to-end test compared output against a hand-maintained
+  golden LRC. It was deleted: it needed the network plus a multi-minute Whisper
+  run per model, and its golden file had drifted — it placed one line inside a
+  neighbour's time slot, which all six models independently disagreed with by
+  ~18s. `test/test_match_invariants.py` now covers the properties that actually
+  matter (line-count parity, monotonicity, order preservation, the ramp
+  regression) without needing a golden file.
 - `--separate-vocals` (Demucs) is **not** recommended as a default: measured
   across these 5 tracks it netted −2.9 points, helping one track (+9.3) and
   hurting four (−1.7 to −12.0) by deleting words it mistook for instruments,

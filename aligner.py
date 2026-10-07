@@ -548,6 +548,13 @@ def match_lyrics_to_words(
             continue
         norm_line = _normalize(line_stripped)
         if not norm_line:
+            # A line that normalizes to nothing - a bare "♪", or pure
+            # punctuation - still needs an entry in the output, otherwise the
+            # result has fewer lines than the input and every later line is
+            # shifted relative to its source. Give it an interpolated
+            # timestamp like any other unmatched line.
+            kept.append(line_stripped)
+            picks.append(None)
             continue
         kept.append(line_stripped)
 
