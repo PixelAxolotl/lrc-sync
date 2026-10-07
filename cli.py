@@ -12,7 +12,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from aligner import align
+from aligner import align, _build_initial_prompt
 from downloader import download_audio
 
 
@@ -37,16 +37,19 @@ def main():
         "--output-words", help="Output word-level timestamps JSON file path"
     )
     parser.add_argument(
-        "--output-sync", help="Output per-character sync JSON file path (requires --characterlevel)"
+        "--output-sync", help="Output word-level sync JSON file path (default: output_sync.json next to --output)"
     )
     parser.add_argument(
         "--characterlevel", action="store_true",
         help="Enable word/character-level JSON outputs (words.json, output_sync.json)"
     )
     parser.add_argument(
-        "--model", "-m", default="small",
-        choices=["tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"],
-        help="Whisper model size (default: small)"
+        "--model", "-m", default="medium",
+        choices=["tiny", "base", "small", "medium", "large-v3", "large-v3-turbo",
+                 "tiny.en", "base.en", "small.en", "medium.en"],
+        help="Whisper model size (default: medium; .en = English-only, poor on "
+             "other languages). Larger is slower but more accurate, especially "
+             "on CJK."
     )
     parser.add_argument(
         "--language", help="Language code (e.g., 'en', 'zh'). Auto-detect if omitted."
@@ -57,10 +60,28 @@ def main():
     )
     parser.add_argument("--temperature", type=float, default=0.0,
                         help="Whisper sampling temperature (default 0.0)")
+    parser.add_argument("--separate-vocals", action="store_true",
+                        help="Separate vocals with Demucs before transcribing (requires demucs)")
+    parser.add_argument("--initial-prompt", action="store_true",
+                        help="Bias Whisper with the lyrics as decoder prompt (off by default; hurts small models)")
     parser.add_argument("--beam-size", type=int, default=5,
-                        help="Whisper beam size (default 5)")
+                        help="Whisper beam size (default 5; higher is slower "
+                             "and measured no better on Japanese)")
     parser.add_argument("--best-of", type=int, default=5,
                         help="Whisper best_of (default 5)")
+    parser.add_argument(
+        "--similarity", default="bigram",
+        choices=["bigram", "sets", "both"],
+        help="Line/word matching score (default: bigram). 'sets' is the older "
+             "order-insensitive bag-of-characters score; 'bigram' is "
+             "order-sensitive and much better on CJK."
+    )
+    parser.add_argument("--accept-threshold", type=float, default=0.2,
+                        help="Minimum match score to accept a line (default 0.2). "
+                             "Below this the line is placed by interpolation.")
+    parser.add_argument("--no-interpolate", action="store_true",
+                        help="Disable interpolated placement of unmatched lines "
+                             "(they fall back to previous-line + 1s)")
     parser.add_argument(
         "--publish", action="store_true",
         help="Publish the resulting LRC to LRCLIB (requires --track, --artist, --duration)"
@@ -74,13 +95,6 @@ def main():
     parser.add_argument("--album", help="Album name for LRCLIB publish (optional)")
 
     args = parser.parse_args()
-
-    if (args.output_words or args.output_sync) and not args.characterlevel:
-        print(
-            "Error: --output-words/--output-sync require --characterlevel",
-            file=sys.stderr,
-        )
-        sys.exit(2)
 
     # Validate lyrics file
     if not Path(args.lyrics).exists():
@@ -120,6 +134,11 @@ def main():
             temperature=args.temperature,
             beam_size=args.beam_size,
             best_of=args.best_of,
+            separate_vocals=args.separate_vocals,
+            initial_prompt=_build_initial_prompt(lyrics_text) if args.initial_prompt else None,
+            similarity_mode=args.similarity,
+            accept_threshold=args.accept_threshold,
+            interpolate_fallback=not args.no_interpolate,
         )
 
         # Print warnings
@@ -133,15 +152,22 @@ def main():
         else:
             print(result.lrc_text)
 
+        # Always emit a word-level sync JSON alongside the LRC
+        from aligner import words_to_json
+        if args.output_sync:
+            sync_out_path = Path(args.output_sync)
+        elif args.output:
+            sync_out_path = Path(args.output).with_name("output_sync.json")
+        else:
+            sync_out_path = Path("output_sync.json")
+        sync_out_path.write_text(
+            words_to_json(result.words), encoding="utf-8")
+        print(f"Word sync JSON written to {sync_out_path}", file=sys.stderr)
+
         if args.output_words:
-            from aligner import words_to_json
             Path(args.output_words).write_text(
                 words_to_json(result.words), encoding="utf-8")
             print(f"Words JSON written to {args.output_words}", file=sys.stderr)
-
-        if args.output_sync:
-            Path(args.output_sync).write_text(result.sync_text, encoding="utf-8")
-            print(f"Sync JSON written to {args.output_sync}", file=sys.stderr)
 
         # Publish to LRCLIB
         if args.publish:

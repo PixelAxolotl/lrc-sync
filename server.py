@@ -12,6 +12,7 @@ from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
+import aligner
 from aligner import align
 from downloader import download_audio
 from lrclib import publish_lrc
@@ -22,6 +23,15 @@ import uuid
 from starlette.middleware.base import BaseHTTPMiddleware
 
 app = FastAPI(title="lrc-sync", description="Sync lyrics with audio to create LRC files")
+
+# All-model pre-download status (for the "download all models" UI button)
+_MODEL_SIZES = ["tiny", "base", "small", "medium", "large-v3-turbo",
+                "tiny.en", "base.en", "small.en", "medium.en"]
+_model_dl_lock = threading.Lock()
+_model_dl = {
+    "running": False, "current": None, "downloaded": [], "errors": {},
+    "done": False, "total": len(_MODEL_SIZES),
+}
 
 
 class NoCacheMiddleware(BaseHTTPMiddleware):
@@ -46,8 +56,8 @@ job_words: dict = {}
 # Per-character sync JSON per finished job
 job_sync: dict = {}
 
-# When False (default), words.json / output_sync.json outputs are disabled
-CHARACTER_LEVEL = False
+# Always produce words.json / output_sync.json outputs
+CHARACTER_LEVEL = True
 
 # Web UI HF-token prompt coordination
 _ui_token = {"evt": None, "token": "", "model": None}
@@ -65,12 +75,16 @@ def _ui_token_provider(model_name):
         job = jobs.get(_current_job_id)
         if job is not None:
             job["need_token"] = model_name
+    with _model_dl_lock:
+        _model_dl["need_token"] = model_name
     print(f"Waiting for HF token via web UI (model={model_name})...", flush=True)
     evt.wait(timeout=900)
     with jobs_lock:
         job = jobs.get(_current_job_id)
         if job is not None:
             job.pop("need_token", None)
+    with _model_dl_lock:
+        _model_dl.pop("need_token", None)
     token = _ui_token.get("token", "")
     _ui_token = {"evt": None, "token": "", "model": None}
     return token
@@ -94,13 +108,16 @@ def _run_job(
     audio_path: str = None,
     url: str = None,
     lyrics: str = "",
-    model: str = "small",
+    model: str = "medium",
     language: str = None,
     offset: float = 0.0,
     cleanup_paths: list = None,
     temperature: float = 0.0,
     beam_size: int = 5,
     best_of: int = 5,
+    separate_vocals: bool = False,
+    similarity_mode: str = "bigram",
+    accept_threshold: float = 0.2,
 ):
     """Background worker: download (if URL) + align, storing progress."""
     global _current_job_id
@@ -140,6 +157,9 @@ def _run_job(
             temperature=temperature,
             beam_size=beam_size,
             best_of=best_of,
+            separate_vocals=separate_vocals,
+            similarity_mode=similarity_mode,
+            accept_threshold=accept_threshold,
         )
         with jobs_lock:
             jobs[job_id].update({
@@ -154,7 +174,8 @@ def _run_job(
         with jobs_lock:
             if CHARACTER_LEVEL:
                 job_words[job_id] = [
-                    {"word": w.word, "start": round(w.start, 3), "end": round(w.end, 3)}
+                    {"word": w.word, "start": round(w.start, 3), "end": round(w.end, 3),
+                     **({"confidence": round(w.confidence, 3)} if w.confidence is not None else {})}
                     for w in result.words
                 ]
                 job_sync[job_id] = result.sync_text
@@ -185,12 +206,15 @@ async def create_job(
     audio: UploadFile = File(None),
     url: str = Form(None),
     lyrics: str = Form(...),
-    model: str = Form("small"),
+    model: str = Form("medium"),
     language: str = Form(None),
     offset: float = Form(0.0),
     temperature: float = Form(0.0),
     beam_size: int = Form(5),
     best_of: int = Form(5),
+    separate_vocals: bool = Form(False),
+    similarity: str = Form("bigram"),
+    accept_threshold: float = Form(0.2),
     hf_token: str = Form(None),
 ):
     """Start an alignment job. Returns {"job_id": ...} immediately."""
@@ -242,6 +266,9 @@ async def create_job(
             "temperature": temperature,
             "beam_size": beam_size,
             "best_of": best_of,
+            "separate_vocals": separate_vocals,
+            "similarity_mode": similarity,
+            "accept_threshold": accept_threshold,
             "cleanup_paths": cleanup_paths,
         },
         daemon=True,
@@ -331,9 +358,10 @@ async def get_job_words(job_id: str):
 async def align_endpoint(
     audio: UploadFile = File(...),
     lyrics: str = Form(...),
-    model: str = Form("small"),
+    model: str = Form("medium"),
     language: str = Form(None),
     offset: float = Form(0.0),
+    separate_vocals: bool = Form(False),
 ):
     """Upload audio + lyrics, return synced LRC text."""
     # Save uploaded audio to temp file
@@ -350,6 +378,7 @@ async def align_endpoint(
             model_size=model,
             language=language,
             offset=offset,
+            separate_vocals=separate_vocals,
         )
         return result.lrc_text
     finally:
@@ -360,9 +389,10 @@ async def align_endpoint(
 async def youtube_endpoint(
     url: str = Form(...),
     lyrics: str = Form(...),
-    model: str = Form("small"),
+    model: str = Form("medium"),
     language: str = Form(None),
     offset: float = Form(0.0),
+    separate_vocals: bool = Form(False),
 ):
     """Download from YouTube, then align with lyrics. Returns LRC text."""
     import tempfile
@@ -377,10 +407,46 @@ async def youtube_endpoint(
             model_size=model,
             language=language,
             offset=offset,
+            separate_vocals=separate_vocals,
         )
         return result.lrc_text
     finally:
         Path(audio_path).unlink(missing_ok=True)
+
+
+@app.post("/api/models/download-all")
+async def download_all_models():
+    """Download (and briefly load) every model size ahead of time."""
+    with _model_dl_lock:
+        if _model_dl["running"]:
+            from fastapi.responses import JSONResponse
+            return JSONResponse(status_code=409, content={"error": "Model download already running"})
+        _model_dl.update({"running": True, "current": None, "downloaded": [], "errors": {}, "done": False})
+
+    def _worker():
+        aligner.TOKEN_PROVIDER = _ui_token_provider
+        for size in _MODEL_SIZES:
+            with _model_dl_lock:
+                _model_dl["current"] = size
+            try:
+                m = aligner._load_whisper_model(size)
+                del m
+                with _model_dl_lock:
+                    _model_dl["downloaded"].append(size)
+            except Exception as e:
+                with _model_dl_lock:
+                    _model_dl["errors"][size] = str(e)
+        with _model_dl_lock:
+            _model_dl.update({"running": False, "current": None, "done": True})
+
+    threading.Thread(target=_worker, daemon=True).start()
+    return {"status": "started"}
+
+
+@app.get("/api/models/download-status")
+async def download_status():
+    with _model_dl_lock:
+        return dict(_model_dl)
 
 
 @app.get("/api/health")

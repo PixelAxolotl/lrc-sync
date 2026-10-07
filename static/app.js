@@ -57,6 +57,13 @@ function showTab(name) {
     document.getElementById('tabAdvanced').classList.toggle('active', !main);
 }
 
+function updateEnWarning() {
+    const model = document.getElementById("model")?.value || "";
+    const warn = document.getElementById("enWarning");
+    if (!warn) return;
+    warn.style.display = model.endsWith(".en") ? "block" : "none";
+}
+
 function resetLanguageDropdown() {
     const langSelect = document.getElementById("language");
     if (!langSelect) return;
@@ -78,6 +85,49 @@ if (hfTokenBox) {
 const lyricsBox = document.getElementById("lyrics");
 if (lyricsBox) lyricsBox.addEventListener("input", resetLanguageDropdown);
 
+const downloadModelsBtn = document.getElementById("downloadModelsBtn");
+if (downloadModelsBtn) {
+    downloadModelsBtn.addEventListener("click", async () => {
+        const st = document.getElementById("downloadModelsStatus");
+        downloadModelsBtn.disabled = true;
+        try {
+            const r = await fetch("/api/models/download-all", { method: "POST" });
+            if (!r.ok) {
+                const d = await r.json().catch(() => ({}));
+                throw new Error(d.error || "Failed to start download");
+            }
+            if (st) st.textContent = "Starting model downloads...";
+            while (true) {
+                await new Promise((r2) => setTimeout(r2, 1000));
+                const s = await fetch("/api/models/download-status");
+                const d = await s.json();
+                if (d.need_token) {
+                    const ov = document.getElementById("tokenOverlay");
+                    const msg = document.getElementById("tokenMsg");
+                    if (msg) msg.textContent = `Model "${d.need_token}" is not downloaded. Enter an HF token to continue, or continue without one.`;
+                    if (ov) ov.style.display = "flex";
+                    await new Promise((r2) => { window._tokenResolved = r2; });
+                    continue;
+                }
+                if (st) {
+                    if (d.running) {
+                        st.textContent = `Downloading '${d.current || "..."}'... (${(d.downloaded || []).length}/${d.total} done)`;
+                    } else if (d.done) {
+                        const errs = Object.keys(d.errors || {});
+                        st.textContent = `Done. Downloaded ${(d.downloaded || []).length}/${d.total} models.` + (errs.length ? ` Errors: ${errs.join(", ")}` : "");
+                        break;
+                    }
+                }
+                if (!d.running && d.done) break;
+            }
+        } catch (e) {
+            if (st) st.textContent = `Error: ${e.message}`;
+        } finally {
+            downloadModelsBtn.disabled = false;
+        }
+    });
+}
+
 async function submitHfToken(withToken) {
     const ov = document.getElementById("tokenOverlay");
     const input = document.getElementById("tokenInput");
@@ -88,13 +138,15 @@ async function submitHfToken(withToken) {
         await fetch("/api/token", { method: "POST", body: fd });
     } catch (e) {}
     if (ov) ov.style.display = "none";
-    window._tokenModalShown = false;
     if (!withToken) {
-        const cancelBtn = document.getElementById("cancelBtn");
-        if (cancelBtn) cancelBtn.style.display = "none";
         const error = document.getElementById("error");
         if (error) error.textContent = "Continuing without HF token — download may fail for gated models.";
-        try { if (lastJobId) await fetch(`/api/jobs/${lastJobId}/cancel`, { method: "POST" }); } catch (e) {}
+    }
+    // Resume the job poll that is waiting on the token prompt.
+    if (window._tokenResolved) {
+        const r = window._tokenResolved;
+        window._tokenResolved = null;
+        r();
     }
 }
 
@@ -161,6 +213,13 @@ async function align() {
     formData.append("temperature", temperature);
     formData.append("beam_size", beamSize);
     formData.append("best_of", bestOf);
+    formData.append("separate_vocals", document.getElementById("separateVocals").checked);
+    // Matching knobs: server defaults are the tuned values, so only send
+    // overrides when the user has actually changed them.
+    const simEl = document.getElementById("similarity");
+    if (simEl && simEl.value) formData.append("similarity", simEl.value);
+    const thrEl = document.getElementById("acceptThreshold");
+    if (thrEl && thrEl.value) formData.append("accept_threshold", thrEl.value);
 
     try {
         // Start job
@@ -174,6 +233,8 @@ async function align() {
         }
         const { job_id } = await response.json();
         window._tokenAskedForJob = false;
+        window._tokenJobModel = null;
+        window._tokenResolved = null;
         lastJobId = job_id;
         const cancelBtn = document.getElementById("cancelBtn");
         if (cancelBtn) cancelBtn.style.display = "block";
@@ -197,13 +258,20 @@ async function align() {
                 if (cancelBtn) cancelBtn.style.display = "none";
                 return;
             }
-                    if (job.need_token && !window._tokenModalShown) {
-                window._tokenModalShown = true;
-                const ov = document.getElementById("tokenOverlay");
-                const msg = document.getElementById("tokenMsg");
-                if (msg) msg.textContent = `Model "${job.need_token}" is not downloaded. Enter an HF token to continue, or continue without one.`;
-                if (ov) ov.style.display = "flex";
-                return;
+            if (job.need_token) {
+                if (window._tokenJobModel !== job.need_token) {
+                    window._tokenJobModel = job.need_token;
+                    const ov = document.getElementById("tokenOverlay");
+                    const msg = document.getElementById("tokenMsg");
+                    if (msg) msg.textContent = `Model "${job.need_token}" is not downloaded. Enter an HF token to continue, or continue without one.`;
+                    if (ov) ov.style.display = "flex";
+                    // Wait for the user to resolve the token prompt, then
+                    // resume polling this job instead of leaving the UI stuck.
+                    await new Promise((r) => { window._tokenResolved = r; });
+                }
+                continue;
+            } else {
+                window._tokenJobModel = null;
             }
             if (job.detected_language) {
                 const langSelect = document.getElementById("language");
@@ -233,6 +301,9 @@ async function align() {
                 result.textContent = lrcResult;
                 resultCard.style.display = "block";
                 status.textContent = "Done!";
+                if (job.warnings && job.warnings.length) {
+                    status.textContent += " (" + job.warnings.join("; ") + ")";
+                }
                 hideProgress();
                 btn.disabled = false;
                 break;

@@ -53,9 +53,25 @@ python cli.py --audio song.mp3 --lyrics lyrics.txt \
 ```
 
 Options:
-- `--model` / `-m`: Whisper model size (`tiny`, `base`, `small`, `medium`, `large-v3`). Default: `small`
+- `--model` / `-m`: Whisper model size (`tiny`, `base`, `small`, `medium`, `large-v3`, plus English-only `tiny.en`, `base.en`, `small.en`, `medium.en`). Default: `medium`
+  - Disclaimer: `.en` models are English-only — they transcribe non-English lyrics/audio poorly. Use a multilingual model for ja/zh/ko/etc.
+  - `medium` is the default as the best accuracy-per-second on a Japanese
+    benchmark scored against LRCLIB. Use `small` for speed, `large-v3` for the
+    highest accuracy if you can wait for it (~4x slower than `medium` on CPU).
 - `--language`: Language code (e.g., `en`, `ja`). Auto-detect if omitted
 - `--offset`: Time offset in seconds (positive = lyrics appear later)
+- `--beam-size`: Whisper beam size. Default: `5`
+- `--similarity`: line matching score, `bigram` (default) | `sets` | `both`
+- `--accept-threshold`: minimum score to accept a line. Default: `0.2`
+- `--no-interpolate`: place unmatched lines at previous+1s instead of
+  interpolating between matched neighbours
+
+Matching notes: the default `bigram` score is order-sensitive, which matters a
+lot for CJK — the older `sets` score is a bag of characters, so a short line of
+common kana matches almost anything. Lines scoring below `--accept-threshold`
+are placed by interpolating between their nearest matched neighbours, which
+avoids the old compounding "previous line + 1s" ramp. Pass `--similarity sets
+--no-interpolate` to restore the previous behaviour.
 
 ### Check an LRCLIB entry
 
@@ -69,6 +85,89 @@ python check_publish.py --artist "Artist" --track "Song" --duration 215
 - `GET /api/jobs/{id}` — poll `{stage, percent, message, lrc, error}`
 - `POST /api/publish` — publish LRC to LRCLIB
 - Legacy: `POST /api/align`, `POST /api/youtube`
+
+## Accuracy benchmark
+
+The defaults above were chosen by scoring generated LRC timestamps against
+[LRCLIB](https://lrclib.net) synced lyrics for 5 Japanese tracks (207 lyric
+lines) drawn from a Spotify playlist, spanning orchestral pop, avant-garde art
+pop, josei rock, funk/soul and post-rock.
+
+**Method.** Audio is the official YouTube video; input lyrics are LRCLIB's own
+`plainLyrics`. One constant offset per track is fitted (maximising inliers, not
+mean delta) and subtracted before scoring, so the numbers measure alignment
+shape rather than the music video's intro length. A line counts as correct when
+it lands within 1s of the reference. Lines the aligner drops, splits or merges
+count as errors.
+
+### Model comparison (shipped defaults)
+
+| model | lines within 1s | within 2s | median error | max error | 5-track time |
+|---|---|---|---|---|---|
+| `tiny` | 63.8% | 77.8% | 0.77s | 17.5s | 1m |
+| `base` | 74.9% | 86.5% | 0.62s | 10.5s | 3m |
+| `small` | 83.6% | 91.8% | 0.48s | 20.3s | 5m |
+| **`medium`** (default) | **87.4%** | **92.3%** | 0.39s | 14.8s | ~5m |
+| `large-v3-turbo` | 79.7% | 86.5% | 0.45s | 19.9s | 9m |
+| `large-v3` | 79.2% | 85.5% | **0.31s** | 17.4s | 17m |
+
+`medium` scores highest despite `large-v3` being the larger model, and it is
+~3x faster. `large-v3` does produce the smallest median error, so it is the
+choice if you care about typical rather than worst-case accuracy — but on this
+sample it loses more on hard tracks than it gains.
+
+### Matching parameters (`medium`)
+
+| parameter | best | worst | spread |
+|---|---|---|---|
+| `similarity_mode` | **`bigram` 87.4%** | `sets` 68.1% | **19.3** |
+| `accept_threshold` | 0.1–0.3 → 87.4% | 0.4 → 79.2% | 8.2 |
+| `window_pad` (internal) | 8 → 87.4% | 5 → 86.0% | 1.5 |
+| `interpolate_fallback` | on → 87.4% | off → 86.5% | 1.0 |
+
+The similarity score dominates everything else combined. Character-bigram F1 is
+worth **19.3 points** over the older bag-of-characters score, because the latter
+is order-blind — a short line of common kana (`ほっといて`) matches almost any
+window. Thresholds below 0.3 are inert because interpolation already places
+anything that misses.
+
+### Old matcher vs current, per model
+
+| model | original | current | delta |
+|---|---|---|---|
+| `tiny` | 48.8% | 63.8% | **+15.0** |
+| `base` | 64.3% | 74.9% | +10.6 |
+| `small` | 77.3% | 83.6% | +6.3 |
+| `medium` | 80.2% | 87.4% | +7.3 |
+| `large-v3-turbo` | 76.3% | 79.7% | +3.4 |
+| `large-v3` | 75.4% | 79.2% | +3.9 |
+
+The matching improvements help every model, and help most where the model is
+weakest — they raise the floor rather than substitute for a bigger model.
+
+### Caveats
+
+- **5 tracks / 207 lines is a small sample**, and they are not independent
+  (four are 2025–26 anime tie-ins). A wider 19-track run put the tuning gain at
+  +8.0 points overall, and *larger* on the 14 tracks never used for tuning
+  (+8.6 vs +6.3 on these five) — so the change generalizes rather than fitting
+  this sample.
+- **LRCLIB is machine-generated, not human-verified.** Scoring against it partly
+  means reproducing another model's errors. On an earlier attribution pass,
+  ~5% of lines sat where our transcript said while LRCLIB said otherwise —
+  a reference-side error no aligner can fix.
+- **Music-video audio vs the studio master.** Offset removal absorbs a constant
+  shift but not a different edit. Every track here is duration-matched, so this
+  is controlled rather than proven; expect problems on short versions, live
+  recordings, or creditless openings.
+- **Japanese only.** All measurements are CJK. The bigram score changes
+  non-CJK behaviour and was not tested on English.
+- Roughly 24% of lines in a wider run had their text absent from the Whisper
+  transcript entirely, which no matching change can recover.
+- `--separate-vocals` (Demucs) is **not** recommended as a default: measured
+  across these 5 tracks it netted −2.9 points, helping one track (+9.3) and
+  hurting four (−1.7 to −12.0) by deleting words it mistook for instruments,
+  at ~200s of CPU per track.
 
 ## How it works
 

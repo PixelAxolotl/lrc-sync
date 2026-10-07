@@ -185,14 +185,18 @@
                 </div>
                 <div>
                     <label for="model">Model</label>
-                    <select id="model">
+                    <select id="model" onchange="updateEnWarning()">
                         <option value="tiny">Tiny (fastest, least accurate)</option>
                         <option value="base">Base</option>
-                        <option value="small" selected>Small (recommended)</option>
-                        <option value="medium">Medium</option>
-                        <option value="large-v3">Large v3 (slowest, most accurate)</option>
+                        <option value="small">Small (faster)</option>
+                        <option value="medium" selected>Medium (recommended)</option>
                         <option value="large-v3-turbo">Turbo (large-v3, fast + accurate)</option>
+                        <option value="tiny.en">Tiny.en (English-only)</option>
+                        <option value="base.en">Base.en (English-only)</option>
+                        <option value="small.en">Small.en (English-only)</option>
+                        <option value="medium.en">Medium.en (English-only)</option>
                     </select>
+                    <div id="enWarning" style="display:none; margin-top:0.4rem; font-size:0.82rem; color:var(--danger);">⚠ English-only model: poor/non-English lyrics will transcribe badly. Use a multilingual model for ja/zh/ko/etc.</div>
                 </div>
             </div>
             <div class="row">
@@ -243,7 +247,7 @@
                         <input type="range" id="temperature" min="0" max="0.6" step="0.1" value="0" oninput="document.getElementById('temperatureVal').textContent=this.value">
                     </div>
                     <div class="tip-wrap">
-                        <label for="beamSize">Beam size <span class="hint" id="beamSizeVal">5</span> <span class="tip" data-tip="Beam size: wider beam search = more accurate but slower. 5 is a good default; try 3 for speed or 8-10 for the slowest, most careful result.">ⓘ</span></label>
+                        <label for="beamSize">Beam size <span class="hint" id="beamSizeVal">5</span> <span class="tip" data-tip="Beam size: a wider beam search is slower and measured no better on Japanese. 5 is the default; use 3 for speed.">ⓘ</span></label>
                         <input type="range" id="beamSize" min="1" max="10" step="1" value="5" oninput="document.getElementById('beamSizeVal').textContent=this.value">
                     </div>
                 </div>
@@ -252,7 +256,29 @@
                         <label for="bestOf">Best of <span class="hint" id="bestOfVal">5</span> <span class="tip" data-tip="Best of: number of candidates sampled before picking the best result. Pairs with temperature; raise both only for hard tracks, at the cost of speed.">ⓘ</span></label>
                         <input type="range" id="bestOf" min="1" max="5" step="1" value="5" oninput="document.getElementById('bestOfVal').textContent=this.value">
                     </div>
-                    <div></div>
+                    <div class="field">
+                        <label for="similarity">Matching <span class="hint" id="similarityVal">bigram</span> <span class="tip" data-tip="How lyric lines are matched to transcribed words. 'bigram' is order-sensitive and far better on CJK; 'sets' is the older bag-of-characters score.">ⓘ</span></label>
+                        <select id="similarity" onchange="document.getElementById('similarityVal').textContent=this.value">
+                            <option value="bigram" selected>Bigram (recommended)</option>
+                            <option value="sets">Bag of characters (legacy)</option>
+                            <option value="both">Best of both</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label for="acceptThreshold">Match threshold <span class="hint" id="acceptThresholdVal">0.20</span> <span class="tip" data-tip="Minimum match score to accept a line. Lines below this are placed by interpolating between their matched neighbours. Lower accepts more lines but risks wrong placements.">ⓘ</span></label>
+                        <input type="range" id="acceptThreshold" min="0.05" max="0.60" step="0.05" value="0.20" oninput="document.getElementById('acceptThresholdVal').textContent=Number(this.value).toFixed(2)">
+                    </div>
+                    <div class="tip-wrap">
+                        <label for="separateVocals">Separate vocals <span class="tip" data-tip="Strip instrumentals with Demucs before transcribing. Cleaner vocals, more accurate lyric timing; slower, requires demucs.">ⓘ</span></label>
+                        <input type="checkbox" id="separateVocals" style="margin-top:0.4rem;">
+                    </div>
+                </div>
+                <div class="row">
+                    <div>
+                        <label>Pre-download models</label>
+                        <button id="downloadModelsBtn" type="button" class="download-btn" style="margin-top:0.25rem;">Download all models</button>
+                        <div id="downloadModelsStatus" style="margin-top:0.5rem; font-size:0.85rem; color:#888;"></div>
+                    </div>
                 </div>
         </div>
             <br><br>
