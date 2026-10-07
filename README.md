@@ -100,6 +100,10 @@ shape rather than the music video's intro length. A line counts as correct when
 it lands within 1s of the reference. Lines the aligner drops, splits or merges
 count as errors.
 
+Scores are reproducible with `python temp/bench/readme_bench.py` (see
+`temp/bench/RESULTS.md`); re-running after a code change is a valid regression
+check. Runtimes are from a cold cache — a warm one reports ~1s per model.
+
 ### Model comparison (shipped defaults)
 
 | model | lines within 1s | within 2s | median error | max error | 5-track time |
@@ -107,7 +111,7 @@ count as errors.
 | `tiny` | 63.8% | 77.8% | 0.77s | 17.5s | 1m |
 | `base` | 74.9% | 86.5% | 0.62s | 10.5s | 3m |
 | `small` | 83.6% | 91.8% | 0.48s | 20.3s | 5m |
-| **`medium`** (default) | **87.4%** | **92.3%** | 0.39s | 14.8s | ~5m |
+| **`medium`** (default) | **87.4%** | **92.3%** | 0.39s | 14.8s | ~4m |
 | `large-v3-turbo` | 79.7% | 86.5% | 0.45s | 19.9s | 9m |
 | `large-v3` | 79.2% | 85.5% | **0.31s** | 17.4s | 17m |
 
