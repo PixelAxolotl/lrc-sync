@@ -113,9 +113,10 @@
         .download-btn { background: var(--field); border: 1px solid var(--field-border); margin-top: 0.75rem; }
         .download-btn:hover { background: #1a4a7a; }
         #cancelBtn:hover { background: var(--danger); border-color: var(--danger); color: #fff; }
-        #retryBtn { margin-top: 0.5rem; }
+        #lrclibRetryBtn { margin-top: 0.5rem; }
         .divider { border-top: 1px solid rgba(255, 255, 255, 0.1); margin: 1.25rem 0; }
         .status { text-align: center; color: var(--muted); margin-top: 0.75rem; min-height: 1.4em; font-size: 0.92rem; }
+        .hint { display: block; color: var(--muted); font-size: 0.78rem; margin-top: 0.3rem; min-height: 1.2em; }
         .error { color: var(--danger); text-align: center; margin-top: 0.75rem; min-height: 1.4em; font-size: 0.92rem; }
         #progressWrap { margin-top: 1rem; }
         .tabs { display: flex; gap: 0.5rem; margin-bottom: 1rem; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 0.5rem; }
@@ -176,6 +177,8 @@
             <div class="tabs">
                 <button id="tabMain" class="tab active" onclick="showTab('main')">Main</button>
                 <button id="tabAdvanced" class="tab" onclick="showTab('advanced')">Advanced</button>
+                <button id="tabPaxsenix" class="tab" onclick="showTab('paxsenix')">Paxsenix</button>
+                <button id="tabLrclib" class="tab" onclick="showTab('lrclib')">LRCLIB Upload</button>
             </div>
             <div id="tabMainPanel">
             <div class="row">
@@ -281,6 +284,55 @@
                     </div>
                 </div>
         </div>
+            <div id="tabPaxsenixPanel" style="display:none;">
+            <div class="row">
+                <div>
+                    <label for="paxId">Apple Music track URL or ID</label>
+                    <input type="text" id="paxId" placeholder="https://music.apple.com/.../song/.../1478499922">
+                    <small class="hint">Only Apple Music works — Paxsenix disabled other providers and search. Word-timed tracks give LRC + char sync; line-timed give LRC only.</small>
+                </div>
+            </div>
+            <br>
+            <button id="paxFetchBtn" onclick="fetchPaxsenix()">Fetch synced lyrics</button>
+            <div id="paxBadge" class="status"></div>
+            <div id="paxStatus" class="status" role="status"></div>
+            <div id="paxError" class="error" role="alert"></div>
+            </div>
+            <div id="tabLrclibPanel" style="display:none;">
+                <label for="lrclibLrc">Lyrics <span class="hint">(paste synced LRC or plain lyrics, or load a file below)</span></label>
+                <textarea id="lrclibLrc" placeholder="[00:12.00]First line of lyrics&#10;[00:17.50]Second line of lyrics"></textarea>
+                <div class="row" style="margin-top:1rem;">
+                    <div>
+                        <label for="lrclibTrack">Song name</label>
+                        <input type="text" id="lrclibTrack" placeholder="Track title">
+                    </div>
+                    <div>
+                        <label for="lrclibArtist">Artist</label>
+                        <input type="text" id="lrclibArtist" placeholder="Artist name">
+                    </div>
+                </div>
+                <div class="row">
+                    <div>
+                        <label for="lrclibDuration">Duration (seconds)</label>
+                        <input type="number" id="lrclibDuration" placeholder="e.g. 215" min="1" step="1">
+                        <small id="lrclibDurationHint" class="hint"></small>
+                    </div>
+                    <div>
+                        <label for="lrclibAlbum">Album (optional)</label>
+                        <input type="text" id="lrclibAlbum" placeholder="Album name">
+                    </div>
+                </div>
+                <div class="row">
+                    <div>
+                        <label for="lrclibFile">Load from file <span class="hint">(.lrc or .txt — Shift-JIS files are handled)</span></label>
+                        <input type="file" id="lrclibFile" accept=".lrc,.txt,text/plain">
+                    </div>
+                </div>
+                <button id="lrclibPublishBtn" onclick="publishToLrclib()">Upload to LRCLIB</button>
+                <button id="lrclibRetryBtn" class="download-btn" style="display:none;" onclick="retryLookup()">Check again for ID</button>
+                <div id="lrclibStatus" class="status" role="status"></div>
+            </div>
+            <div id="whisperActions">
             <br><br>
             <button id="alignBtn" onclick="align()">Generate LRC</button>
             <button id="cancelBtn" class="download-btn" style="display:none; margin-top:0.5rem;" onclick="cancelJob()">Cancel</button>
@@ -292,6 +344,7 @@
             </div>
             <div id="status" class="status" role="status"></div>
             <div id="error" class="error" role="alert"></div>
+            </div>
         </div>
 
         <div id="tokenOverlay" style="display:none; position:fixed; inset:0; background:rgba(6,10,24,0.72); z-index:100; align-items:center; justify-content:center; backdrop-filter: blur(3px);">
@@ -313,31 +366,6 @@
             <button class="download-btn" onclick="downloadLRC()">Download .lrc</button>
             <button id="wordsBtn" class="download-btn" onclick="downloadWords()">Download words.json</button>
             <button id="syncBtn" class="download-btn" onclick="downloadSync()">Download output_sync.json</button>
-            <div class="divider"></div>
-            <h2>Publish to LRCLIB</h2>
-            <div class="row">
-                <div>
-                    <label for="trackName">Song name</label>
-                    <input type="text" id="trackName" placeholder="Track title">
-                </div>
-                <div>
-                    <label for="artistName">Artist</label>
-                    <input type="text" id="artistName" placeholder="Artist name">
-                </div>
-            </div>
-            <div class="row">
-                <div>
-                    <label for="duration">Duration (seconds)</label>
-                    <input type="number" id="duration" placeholder="e.g. 215" min="1" step="1">
-                </div>
-                <div>
-                    <label for="albumName">Album (optional)</label>
-                    <input type="text" id="albumName" placeholder="Album name">
-                </div>
-            </div>
-            <button id="publishBtn" onclick="publishToLrclib()">Upload to LRCLIB</button>
-            <button id="retryBtn" class="download-btn" style="display:none;" onclick="retryLookup()">Check again for ID</button>
-            <div id="publishStatus" class="status" role="status"></div>
         </div>
     </div>
 

@@ -5,8 +5,10 @@ Usage:
     python server.py [--host 127.0.0.1] [--port 8000]
 """
 import argparse
+import sys
 import tempfile
 from pathlib import Path
+from typing import Optional
 
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import PlainTextResponse
@@ -14,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 import aligner
 from aligner import align
-from downloader import download_audio
+from downloader import download_audio, download_audio_with_info
 from lrclib import publish_lrc
 
 import threading
@@ -103,6 +105,19 @@ def _update_job(job_id: str, stage: str, percent: int, message: str):
             })
 
 
+def sync_filename(title: Optional[str] = None, fallback: Optional[str] = None) -> str:
+    """Filename for the sync JSON download: `<shortened title>_sync.json`.
+
+    `title` is the YouTube title. `fallback` is an uploaded audio filename,
+    used when there is no title to work from.
+    """
+    from downloader import sanitize_title
+
+    if not title and fallback:
+        title = Path(fallback).stem
+    return sanitize_title(title) + "_sync.json"
+
+
 def _run_job(
     job_id: str,
     audio_path: str = None,
@@ -118,6 +133,7 @@ def _run_job(
     separate_vocals: bool = False,
     similarity_mode: str = "bigram",
     accept_threshold: float = 0.2,
+    source_filename: str = None,
 ):
     """Background worker: download (if URL) + align, storing progress."""
     global _current_job_id
@@ -137,13 +153,16 @@ def _run_job(
                 pass
         _update_job(job_id, stage, percent, message)
 
+    title = None
     try:
         if job_cancel.get(job_id) and job_cancel[job_id].is_set():
             raise RuntimeError("Cancelled")
         path = audio_path
         if url:
             cb("downloading", 0, "Downloading...")
-            path = download_audio(url, progress_callback=cb)
+            downloaded = download_audio_with_info(url, progress_callback=cb)
+            path = downloaded.path
+            title = downloaded.title
             if cleanup_paths is not None:
                 cleanup_paths.append(path)
 
@@ -167,6 +186,10 @@ def _run_job(
                 "lrc": result.lrc_text,
                 "warnings": result.warnings,
                 "detected_language": getattr(result, "detected_language", None),
+                # Surfaced to the UI: names the sync download and pre-fills
+                # the LRCLIB duration field.
+                "duration": getattr(result, "duration", None),
+                "sync_filename": sync_filename(title, fallback=source_filename),
                 "stage": "done",
                 "percent": 100,
                 "message": "Done!",
@@ -270,6 +293,7 @@ async def create_job(
             "similarity_mode": similarity,
             "accept_threshold": accept_threshold,
             "cleanup_paths": cleanup_paths,
+            "source_filename": audio.filename if audio is not None else None,
         },
         daemon=True,
     )
@@ -455,6 +479,35 @@ async def health():
     return {"status": "ok"}
 
 
+@app.get("/api/paxsenix")
+async def paxsenix_endpoint(id: str):
+    """Fetch synced lyrics from Paxsenix (Apple Music TTML).
+
+    Line-timed tracks return {"timing": "line", "lrc": ...};
+    word-timed tracks additionally return "syncJson" in output_sync.json shape.
+    """
+    from fastapi.responses import JSONResponse
+    from paxsenix import extract_apple_id, fetch_ttml, parse_ttml, to_lrc, to_sync_json
+
+    try:
+        track_id = extract_apple_id(id)
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+    try:
+        parsed = parse_ttml(fetch_ttml(track_id))
+    except (RuntimeError, ValueError) as e:
+        return JSONResponse(status_code=502, content={"error": str(e)})
+
+    result = {
+        "timing": parsed["timing"],
+        "trackId": track_id,
+        "lrc": to_lrc(parsed),
+    }
+    if parsed["timing"] == "word":
+        result["syncJson"] = to_sync_json(parsed)
+    return result
+
+
 @app.get("/api/lookup")
 async def lookup_endpoint(artist: str, track: str, duration: float):
     """Retry ID lookup without re-publishing. Returns {"id": ...} or 404."""
@@ -543,7 +596,13 @@ def main():
         print(f"Opening {url} in your browser...")
 
     import uvicorn
-    uvicorn.run(app, host=args.host, port=args.port, access_log=False)
+
+    # On Windows uvicorn defaults to ProactorEventLoop, whose accept path closes
+    # the listening socket when a client resets before AcceptEx completes
+    # (python/cpython#93821). Use a SelectorEventLoop instead: it survives
+    # per-connection resets instead of killing the server. See eventloop.py.
+    loop = "eventloop:selector_loop_factory" if sys.platform == "win32" else "auto"
+    uvicorn.run(app, host=args.host, port=args.port, access_log=False, loop=loop)
 
 
 if __name__ == "__main__":

@@ -43,12 +43,32 @@ class AlignmentResult:
     spans: list = field(default_factory=list)
     sync_text: str = ""
     detected_language: Optional[str] = None
+    duration: Optional[float] = None
 
 
 def _find_ffmpeg() -> Optional[str]:
     """Find ffmpeg executable. Returns path or None."""
     from ffmpeg_setup import find_ffmpeg
     return find_ffmpeg()
+
+
+def wav_duration_seconds(wav_path: str) -> Optional[float]:
+    """Read a WAV's duration from its header. Returns None if unreadable.
+
+    Uses the stdlib wave module rather than ffprobe: the pipeline already
+    converts to 16kHz mono WAV, so the header gives the exact length the LRC
+    timestamps are measured against, with no extra process spawn.
+    """
+    import wave
+
+    try:
+        with wave.open(wav_path, "rb") as w:
+            rate = w.getframerate()
+            if rate <= 0:
+                return None
+            return w.getnframes() / float(rate)
+    except (wave.Error, OSError, EOFError):
+        return None
 
 
 def convert_to_wav(audio_path: str, output_path: Optional[str] = None) -> str:
@@ -282,15 +302,54 @@ def _maybe_prompt_for_hf_token(name: str):
         print("Continuing without a token.", flush=True)
 
 
+def _load_wav_mono16k(wav_path: str) -> Optional["np.ndarray"]:
+    """Load a 16kHz mono 16-bit WAV into the float32 array faster-whisper wants.
+
+    faster-whisper decodes a path with ``faster_whisper.audio.decode_audio``,
+    which calls ``av.open(..., metadata_errors="ignore")``. Newer PyAV dropped
+    that keyword (verified on av 19.0.1), so passing a path crashes — and
+    requirements.txt's old ``av==14.2.0`` pin has no wheel for Python 3.14,
+    so it cannot be installed there anyway.
+
+    We do not need PyAV: ``convert_to_wav`` already wrote this file as exactly
+    what ``decode_audio`` would produce (16kHz, mono, s16le), so read it with
+    the stdlib and hand Whisper the array. ``transcribe()`` and
+    ``detect_language()`` skip their decoder entirely when given an ndarray.
+
+    Returns None when the file is missing, unreadable, or not in that exact
+    format, so callers fall back to letting faster-whisper decode it.
+    """
+    import wave
+
+    import numpy as np
+
+    try:
+        with wave.open(wav_path, "rb") as w:
+            if (w.getnchannels() != 1 or w.getsampwidth() != 2
+                    or w.getframerate() != 16000):
+                return None
+            raw = w.readframes(w.getnframes())
+    except (wave.Error, OSError, EOFError):
+        return None
+    if not raw:
+        return None
+    return np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0
+
+
+def _whisper_audio_input(wav_path: str):
+    """The audio to hand faster-whisper: our array when we can build it,
+    otherwise the path so faster-whisper decodes it itself."""
+    audio = _load_wav_mono16k(wav_path)
+    return wav_path if audio is None else audio
+
+
 def detect_language_tiny(wav_path: str) -> tuple[str, float]:
     """Detect audio language with a tiny CPU model (fast), for auto mode."""
     global _tiny_model
-    from faster_whisper import WhisperModel
-    from faster_whisper.audio import decode_audio
 
     if _tiny_model is None:
         _tiny_model = _load_whisper_model("tiny")
-    audio = decode_audio(wav_path, sampling_rate=16000)
+    audio = _whisper_audio_input(wav_path)
     language, probability, _ = _tiny_model.detect_language(audio)
     return language, probability
 
@@ -401,7 +460,7 @@ def transcribe_with_whisper(
         temperature_param = temperature
 
     segments, info = model.transcribe(
-        wav_path,
+        _whisper_audio_input(wav_path),
         word_timestamps=True,
         language=language,
         temperature=temperature_param,
@@ -977,6 +1036,9 @@ def align(
     if progress_callback:
         progress_callback("converting", 0, "Converting audio...")
     wav_path = convert_to_wav(audio_path)
+    # Read length from the WAV we just made — it is the same clock the LRC
+    # timestamps use, so the UI's LRCLIB duration matches the sync output.
+    result.duration = wav_duration_seconds(wav_path)
     if progress_callback:
         progress_callback("converting", 100, "Audio converted")
 

@@ -1,5 +1,9 @@
 faster-whisper>=1.0.0
-av==14.2.0
+# PyAV is only faster-whisper's *fallback* decoder: aligner hands Whisper the
+# 16kHz mono array it already has, so the av.open() API changes that broke
+# faster-whisper 1.2.1 can't reach us. Do not pin an old av -- 14.2.0 has no
+# wheel for Python 3.13+ and cannot be installed there.
+av>=14.2.0
 fastapi>=0.104.0
 uvicorn>=0.24.0
 python-multipart>=0.0.6

@@ -1,5 +1,7 @@
 let lrcResult = "";
 let lastJobId = "";
+let lastSyncFilename = "";
+let paxSyncJson = "";
 
 let displayedPercent = 0;
 let targetPercent = 0;
@@ -50,11 +52,27 @@ function hideProgress() {
 }
 
 function showTab(name) {
-    const main = name === 'main';
-    document.getElementById('tabMainPanel').style.display = main ? '' : 'none';
-    document.getElementById('tabAdvancedPanel').style.display = main ? 'none' : '';
-    document.getElementById('tabMain').classList.toggle('active', main);
-    document.getElementById('tabAdvanced').classList.toggle('active', !main);
+    const panels = {
+        main: 'tabMainPanel',
+        advanced: 'tabAdvancedPanel',
+        paxsenix: 'tabPaxsenixPanel',
+        lrclib: 'tabLrclibPanel',
+    };
+    for (const [key, panelId] of Object.entries(panels)) {
+        document.getElementById(panelId).style.display = name === key ? '' : 'none';
+    }
+    document.getElementById('tabMain').classList.toggle('active', name === 'main');
+    document.getElementById('tabAdvanced').classList.toggle('active', name === 'advanced');
+    document.getElementById('tabPaxsenix').classList.toggle('active', name === 'paxsenix');
+    document.getElementById('tabLrclib').classList.toggle('active', name === 'lrclib');
+    // Whisper controls only belong to the alignment flow.
+    const isAlignTab = name === 'main' || name === 'advanced';
+    document.getElementById('whisperActions').style.display = isAlignTab ? '' : 'none';
+    if (name === 'lrclib') {
+        // Hand a freshly generated LRC over, but never clobber typed or loaded text.
+        const box = document.getElementById('lrclibLrc');
+        if (box && !box.value.trim() && lrcResult) box.value = lrcResult;
+    }
 }
 
 function updateEnWarning() {
@@ -84,6 +102,42 @@ if (hfTokenBox) {
 
 const lyricsBox = document.getElementById("lyrics");
 if (lyricsBox) lyricsBox.addEventListener("input", resetLanguageDropdown);
+
+// LRC files in the wild are often Shift-JIS, which FileReader's UTF-8 default
+// turns into mojibake, so try each encoding strictly and keep the first that
+// decodes cleanly.
+function decodeLyrics(buffer) {
+    for (const encoding of ["utf-8", "shift_jis", "windows-1252"]) {
+        try {
+            return new TextDecoder(encoding, { fatal: true }).decode(buffer);
+        } catch (e) {
+            // wrong encoding, try the next one
+        }
+    }
+    return new TextDecoder().decode(buffer);
+}
+
+const lrclibFileBox = document.getElementById("lrclibFile");
+if (lrclibFileBox) {
+    lrclibFileBox.addEventListener("change", () => {
+        const file = lrclibFileBox.files[0];
+        const box = document.getElementById("lrclibLrc");
+        const status = document.getElementById("lrclibStatus");
+        if (!file || !box) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+            box.value = decodeLyrics(reader.result);
+            if (status) {
+                const lines = box.value.split("\n").filter((l) => l.trim()).length;
+                status.textContent = `Loaded ${file.name} — ${lines} non-empty line${lines === 1 ? "" : "s"}.`;
+            }
+        };
+        reader.onerror = () => {
+            if (status) status.textContent = `Could not read ${file.name}.`;
+        };
+        reader.readAsArrayBuffer(file);
+    });
+}
 
 const downloadModelsBtn = document.getElementById("downloadModelsBtn");
 if (downloadModelsBtn) {
@@ -236,6 +290,8 @@ async function align() {
         window._tokenJobModel = null;
         window._tokenResolved = null;
         lastJobId = job_id;
+        // Reset per-run state so a previous song's name can't leak into this one.
+        lastSyncFilename = "";
         const cancelBtn = document.getElementById("cancelBtn");
         if (cancelBtn) cancelBtn.style.display = "block";
 
@@ -249,6 +305,9 @@ async function align() {
             if (job.stage === "error" || job.error) {
                 throw new Error(job.error || job.message);
             }
+            // Track the real download name as soon as the server knows it, so
+            // the sync button label updates even if polling ends early.
+            if (job.sync_filename) lastSyncFilename = job.sync_filename;
             if (job.stage === "cancelled") {
                 status.textContent = "Cancelled.";
                 error.textContent = "";
@@ -292,12 +351,16 @@ async function align() {
             const wordsBtn = document.getElementById("wordsBtn");
             const syncBtn = document.getElementById("syncBtn");
             if (wordsBtn) wordsBtn.style.display = job.character_level ? "" : "none";
-            if (syncBtn) syncBtn.style.display = job.character_level ? "" : "none";
+            if (syncBtn) {
+                syncBtn.style.display = job.character_level ? "" : "none";
+                syncBtn.onclick = downloadSync;
+            }
 
             if (job.done) {
                 const cancelBtn = document.getElementById("cancelBtn");
                 if (cancelBtn) cancelBtn.style.display = "none";
                 lrcResult = job.lrc || "";
+                paxSyncJson = "";
                 result.textContent = lrcResult;
                 resultCard.style.display = "block";
                 status.textContent = "Done!";
@@ -306,6 +369,8 @@ async function align() {
                 }
                 hideProgress();
                 btn.disabled = false;
+                if (job.sync_filename) updateSyncButtonLabel(job.sync_filename);
+                autofillDuration(job.duration);
                 break;
             }
         }
@@ -316,6 +381,23 @@ async function align() {
     } finally {
         btn.disabled = false;
     }
+}
+
+// Never clobber a value the user typed — only fill an empty field.
+function autofillDuration(duration) {
+    if (!duration || !isFinite(duration) || duration <= 0) return;
+    const field = document.getElementById("lrclibDuration");
+    if (!field) return;
+    const current = parseFloat(field.value);
+    if (current && current > 0) return;
+    field.value = Math.round(duration);
+    const hint = document.getElementById("lrclibDurationHint");
+    if (hint) hint.textContent = `auto-filled from audio length (${duration.toFixed(1)}s)`;
+}
+
+function updateSyncButtonLabel(filename) {
+    const btn = document.getElementById("syncBtn");
+    if (btn) btn.textContent = `Download ${filename}`;
 }
 
 function downloadLRC() {
@@ -359,7 +441,7 @@ async function downloadSync() {
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = "output_sync.json";
+        a.download = lastSyncFilename || "audio_sync.json";
         a.click();
         URL.revokeObjectURL(url);
     } catch (e) {
@@ -367,18 +449,84 @@ async function downloadSync() {
     }
 }
 
+async function downloadPaxSync() {
+    if (!paxSyncJson) return;
+    const blob = new Blob([paxSyncJson], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "paxsenix_sync.json";
+    a.click();
+    URL.revokeObjectURL(url);
+}
+
+async function fetchPaxsenix() {
+    const input = document.getElementById("paxId").value.trim();
+    const status = document.getElementById("paxStatus");
+    const error = document.getElementById("paxError");
+    const badge = document.getElementById("paxBadge");
+    const btn = document.getElementById("paxFetchBtn");
+    const resultCard = document.getElementById("resultCard");
+    const result = document.getElementById("result");
+
+    if (!input) {
+        error.textContent = "Paste an Apple Music track URL or ID.";
+        return;
+    }
+    error.textContent = "";
+    if (badge) badge.textContent = "";
+    btn.disabled = true;
+    status.textContent = "Fetching from Paxsenix...";
+    try {
+        const response = await fetch(`/api/paxsenix?${new URLSearchParams({ id: input })}`);
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || `Server error: ${response.status}`);
+
+        lrcResult = data.lrc || "";
+        paxSyncJson = data.syncJson || "";
+        lastJobId = "";
+        result.textContent = lrcResult;
+        resultCard.style.display = "block";
+        if (badge) badge.textContent = data.timing === "word" ? "Word-timed: LRC + char sync" : "Line-timed: LRC only";
+
+        const wordsBtn = document.getElementById("wordsBtn");
+        const syncBtn = document.getElementById("syncBtn");
+        if (wordsBtn) wordsBtn.style.display = "none";
+        if (syncBtn) {
+            if (paxSyncJson) {
+                syncBtn.style.display = "";
+                syncBtn.onclick = downloadPaxSync;
+                updateSyncButtonLabel("paxsenix_sync.json");
+            } else {
+                syncBtn.style.display = "none";
+            }
+        }
+        status.textContent = "Done! Scroll down to download or publish.";
+        resultCard.scrollIntoView({ behavior: "smooth", block: "start" });
+    } catch (e) {
+        status.textContent = "";
+        error.textContent = `Error: ${e.message}`;
+    } finally {
+        btn.disabled = false;
+    }
+}
+
 async function publishToLrclib() {
-    const track = document.getElementById("trackName").value.trim();
-    const artist = document.getElementById("artistName").value.trim();
-    const duration = parseFloat(document.getElementById("duration").value);
-    const album = document.getElementById("albumName").value.trim();
-    const publishStatus = document.getElementById("publishStatus");
-    const btn = document.getElementById("publishBtn");
-    const retryBtn = document.getElementById("retryBtn");
+    const box = document.getElementById("lrclibLrc");
+    const lrc = box ? box.value : "";
+    const track = document.getElementById("lrclibTrack").value.trim();
+    const artist = document.getElementById("lrclibArtist").value.trim();
+    const duration = parseFloat(document.getElementById("lrclibDuration").value);
+    const album = document.getElementById("lrclibAlbum").value.trim();
+    const publishStatus = document.getElementById("lrclibStatus");
+    const btn = document.getElementById("lrclibPublishBtn");
+    const retryBtn = document.getElementById("lrclibRetryBtn");
     if (retryBtn) retryBtn.style.display = "none";
 
-    if (!lrcResult) {
-        publishStatus.textContent = "Generate an LRC first.";
+    if (!lrc.trim()) {
+        // LRCLIB stores a track with no lyrics at all as instrumental, so
+        // never let an empty box through.
+        publishStatus.textContent = "Paste lyrics or load a file first.";
         return;
     }
     if (!track || !artist) {
@@ -390,14 +538,14 @@ async function publishToLrclib() {
         return;
     }
 
-    publishStatus.textContent = "Publishing to LRCLIB...";
+    publishStatus.textContent = "Publishing to LRCLIB (solving proof-of-work)...";
     btn.disabled = true;
 
     const formData = new FormData();
     formData.append("track", track);
     formData.append("artist", artist);
     formData.append("duration", duration);
-    formData.append("lrc", lrcResult);
+    formData.append("lrc", lrc);
     if (album) formData.append("album", album);
 
     try {
@@ -421,11 +569,11 @@ async function publishToLrclib() {
 }
 
 async function retryLookup() {
-    const track = document.getElementById("trackName").value.trim();
-    const artist = document.getElementById("artistName").value.trim();
-    const duration = parseFloat(document.getElementById("duration").value);
-    const publishStatus = document.getElementById("publishStatus");
-    const retryBtn = document.getElementById("retryBtn");
+    const track = document.getElementById("lrclibTrack").value.trim();
+    const artist = document.getElementById("lrclibArtist").value.trim();
+    const duration = parseFloat(document.getElementById("lrclibDuration").value);
+    const publishStatus = document.getElementById("lrclibStatus");
+    const retryBtn = document.getElementById("lrclibRetryBtn");
 
     publishStatus.textContent = "Checking LRCLIB for ID...";
     try {
