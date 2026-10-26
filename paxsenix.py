@@ -18,6 +18,8 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 
+from logger import log
+
 BASE_URL = "https://lyrics.paxsenix.org"
 USER_AGENT = "lrc-sync/1.0"
 
@@ -229,24 +231,34 @@ def fetch_ttml(track_id: str, timeout: int = 30) -> str:
         f"{BASE_URL}/apple-music/lyrics?{query}",
         headers={"User-Agent": USER_AGENT},
     )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            envelope = json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
+    import time
+
+    for attempt in range(1, 6):
         try:
-            envelope = json.loads(e.read().decode("utf-8"))
-        except Exception:
-            envelope = {}
-        detail = ""
-        if isinstance(envelope, dict):
-            detail = str(envelope.get("message") or envelope.get("detail") or "")
-        if e.code == 503:
-            raise RuntimeError("Paxsenix lyrics service is busy; retry later")
-        if e.code == 404:
-            raise RuntimeError("No lyrics found for this track")
-        raise RuntimeError(f"Paxsenix request failed: HTTP {e.code} {detail}".strip())
-    except Exception as e:
-        if isinstance(e, RuntimeError):
-            raise
-        raise RuntimeError(f"Paxsenix request failed: {e}")
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                envelope = json.loads(resp.read().decode("utf-8"))
+            if attempt > 1:
+                log("INFO", f"Paxsenix retry succeeded on attempt {attempt}/5")
+            break
+        except urllib.error.HTTPError as e:
+            try:
+                envelope = json.loads(e.read().decode("utf-8"))
+            except Exception:
+                envelope = {}
+            detail = ""
+            if isinstance(envelope, dict):
+                detail = str(envelope.get("message") or envelope.get("detail") or "")
+            if e.code == 503:
+                if attempt < 5:
+                    log("WARN", f"Paxsenix busy, retry {attempt}/5...")
+                    time.sleep(1.0 * (2 ** (attempt - 1)))
+                    continue
+                raise RuntimeError("Paxsenix lyrics service is busy; retry later")
+            if e.code == 404:
+                raise RuntimeError("No lyrics found for this track")
+            raise RuntimeError(f"Paxsenix request failed: HTTP {e.code} {detail}".strip())
+        except Exception as e:
+            if isinstance(e, RuntimeError):
+                raise
+            raise RuntimeError(f"Paxsenix request failed: {e}")
     return extract_ttml_from_envelope(envelope)

@@ -10,6 +10,8 @@ import json
 import urllib.parse
 import urllib.request
 
+from logger import log
+
 
 def check(artist: str, track: str, duration: float):
     params = urllib.parse.urlencode({
@@ -26,13 +28,14 @@ def check(artist: str, track: str, duration: float):
             record = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         if e.code == 404:
-            print(f"NOT FOUND on LRCLIB: {artist} - {track} ({duration}s)")
+            log("ERROR", f"NOT FOUND on LRCLIB: {artist} - {track} ({duration}s)")
+            log("WARN", "Note: new publishes take a while to appear; retry /api/search to confirm visibility.")
             return False
         raise
 
     synced = record.get("syncedLyrics") or ""
     plain = record.get("plainLyrics") or ""
-    print(f"FOUND on LRCLIB (id={record.get('id')}):")
+    log("INFO", f"FOUND on LRCLIB (id={record.get('id')}):")
     print(f"  track:    {record.get('trackName')}")
     print(f"  artist:   {record.get('artistName')}")
     print(f"  album:    {record.get('albumName')}")

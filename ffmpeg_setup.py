@@ -8,6 +8,8 @@ import zipfile
 from pathlib import Path
 from typing import Optional
 
+from logger import log
+
 PROJECT_DIR = Path(__file__).parent
 FFMPEG_ZIP_URL = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
 
@@ -31,16 +33,16 @@ def _download_ffmpeg() -> str:
     project directory. Returns the path to ffmpeg.exe."""
     zip_path = PROJECT_DIR / "ffmpeg-release-essentials.zip"
     try:
-        print(f"ffmpeg not found — downloading from {FFMPEG_ZIP_URL} ...")
+        log("INFO", f"ffmpeg not found — downloading from {FFMPEG_ZIP_URL} ...")
 
         def _progress(block_num, block_size, total_size):
             if total_size > 0:
                 pct = min(100, int(block_num * block_size * 100 / total_size))
-                print(f"\rDownloading ffmpeg... {pct}%", end="", flush=True)
+                log("INFO", f"\rDownloading ffmpeg... {pct}%", end="")
 
         urllib.request.urlretrieve(FFMPEG_ZIP_URL, zip_path, _progress)
         print()
-        print("Extracting ffmpeg...")
+        log("INFO", "Extracting ffmpeg...")
         with zipfile.ZipFile(zip_path) as zf:
             zf.extractall(PROJECT_DIR)
     finally:
