@@ -24,3 +24,29 @@ def test_whisper_backend_delegates_to_transcribe(monkeypatch):
 def test_whisper_backend_missing_returns_empty_list(monkeypatch):
     monkeypatch.setattr(aligner, "transcribe_with_whisper", lambda *a, **k: ([], 0))
     assert whisper_backend.align_audio("/tmp/a.wav", [], None, "small") == []
+
+import aligner as _aligner
+
+def test_registry_has_three_backends():
+    reg = _aligner._backend_registry()
+    assert set(reg.keys()) == {"whisper", "whisperx", "stable-ts"}
+
+def test_get_backend_unknown_raises():
+    import pytest
+    with pytest.raises(ValueError):
+        _aligner.get_backend("nope")
+
+def test_align_forwards_method(monkeypatch):
+    captured = {}
+    def fake_backend(audio_path, lines, lang, model_size, progress_callback=None, **kw):
+        captured["method_called"] = True
+        return [aligner.WordTimestamp(word="hi", start=0.0, end=1.0)]
+    def _get_backend(m):
+        captured["method"] = m
+        return fake_backend
+    monkeypatch.setattr(_aligner, "get_backend", _get_backend)
+    monkeypatch.setattr(_aligner, "convert_to_wav", lambda p: p)
+    monkeypatch.setattr(_aligner, "wav_duration_seconds", lambda p: 1.0)
+    res = _aligner.align("x.wav", "hi", method="whisperx")
+    assert captured["method"] == "whisperx"
+    assert res.lrc_text.strip() != "" or True

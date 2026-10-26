@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from logger import log
+
 
 @dataclass
 class WordTimestamp:
@@ -44,6 +46,37 @@ class AlignmentResult:
     sync_text: str = ""
     detected_language: Optional[str] = None
     duration: Optional[float] = None
+
+
+_BACKEND_REGISTRY = None
+
+
+def _load_backend_registry():
+    global _BACKEND_REGISTRY
+    if _BACKEND_REGISTRY is not None:
+        return _BACKEND_REGISTRY
+    from backends import whisper_backend, whisperx_backend, stablets_backend
+    _BACKEND_REGISTRY = {
+        "whisper": whisper_backend.align_audio,
+        "whisperx": whisperx_backend.align_audio,
+        "stable-ts": stablets_backend.align_audio,
+    }
+    return _BACKEND_REGISTRY
+
+
+def _backend_registry():
+    return _load_backend_registry()
+
+
+def get_backend(method):
+    reg = _backend_registry()
+    key = (method or "whisper").strip().lower()
+    if key not in reg:
+        raise ValueError(
+            f"Unknown alignment method '{method}'. "
+            f"Available: {', '.join(sorted(reg))}"
+        )
+    return reg[key]
 
 
 def _find_ffmpeg() -> Optional[str]:
@@ -195,13 +228,13 @@ def _load_whisper_model(name: str, progress_callback=None):
     """
     cached = _MODEL_CACHE.get(name)
     if cached is not None:
-        print(f"Reusing loaded faster-whisper model '{name}'.", flush=True)
+        log("INFO", f"Reusing loaded faster-whisper model '{name}'.")
         return cached
 
     from faster_whisper import WhisperModel
     common = dict(device="cpu", compute_type="int8",
                   download_root=str(_LOCAL_MODELS_DIR))
-    print(f"Loading faster-whisper model '{name}' (CPU/int8)...", flush=True)
+    log("INFO", f"Loading faster-whisper model '{name}' (CPU/int8)...")
     local = _LOCAL_MODELS_DIR / name
     download_needed = not Path(_model_source(name)).exists() and not _already_downloaded(name)
     if download_needed:
@@ -209,7 +242,7 @@ def _load_whisper_model(name: str, progress_callback=None):
         if progress_callback:
             progress_callback("downloading", 0, f"Downloading '{name}' from Hugging Face...")
     if download_needed:
-        print(f"Model '{name}' not found locally — downloading from Hugging Face...", flush=True)
+        log("INFO", f"Model '{name}' not found locally — downloading from Hugging Face...")
     import threading, time
     stop = threading.Event()
     prev_mb = -1.0
@@ -221,7 +254,7 @@ def _load_whisper_model(name: str, progress_callback=None):
                 mb = sum(f.stat().st_size for f in _LOCAL_MODELS_DIR.rglob("*") if f.is_file()) / 1e6
                 if mb > prev_mb + 0.5:  # only print when it actually grows
                     delta = mb if prev_mb < 0 else mb - prev_mb
-                    print(f"  downloaded {delta:.1f} MB (total in whisper_models: {mb:.1f} MB)...", flush=True)
+                    log("INFO", f"downloaded {delta:.1f} MB (total in whisper_models: {mb:.1f} MB)...")
                     if progress_callback:
                         progress_callback("downloading", 0, f"Downloading '{name}'… {mb:.0f} MB received")
                     prev_mb = mb
@@ -234,11 +267,11 @@ def _load_whisper_model(name: str, progress_callback=None):
 
     try:
         model = WhisperModel(_model_source(name), **common)
-        print(f"Model '{name}' ready.", flush=True)
+        log("INFO", f"Model '{name}' ready.")
         _MODEL_CACHE[name] = model
         return model
     except Exception as e:
-        print(f"HF download/load failed for '{name}' ({e}).", flush=True)
+        log("ERROR", f"HF download/load failed for '{name}' ({e}).")
     finally:
         stop.set()
     raise RuntimeError(
@@ -274,32 +307,28 @@ def _maybe_prompt_for_hf_token(name: str):
         return
     if os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN"):
         return
-    print(
-        f"Model '{name}' is not downloaded yet. Hugging Face may require an access token.\n"
-        "Paste an HF token to use, or press Enter / 'n' to continue without one.",
-        flush=True,
-    )
+    log("INFO", f"Model '{name}' is not downloaded yet. Hugging Face may require an access token. Paste an HF token to use, or press Enter / 'n' to continue without one.")
     try:
         import sys
         if TOKEN_PROVIDER is not None:
             token = TOKEN_PROVIDER(name).strip()
             if token and token.lower() not in ("n", "no", "skip"):
                 os.environ["HF_TOKEN"] = token
-                print("HF_TOKEN set from web UI.", flush=True)
+                log("INFO", "HF_TOKEN set from web UI.")
             else:
-                print("User chose to continue without a token.", flush=True)
+                log("INFO", "User chose to continue without a token.")
             return
         if not sys.stdin.isatty():
-            print("No interactive terminal detected; proceeding without a token.", flush=True)
+            log("WARN", "No interactive terminal detected; proceeding without a token.")
             return
         token = input("HF token (or Enter / n to skip): ").strip()
     except (EOFError, OSError):
         return
     if token and token.lower() not in ("n", "no", "skip"):
         os.environ["HF_TOKEN"] = token
-        print("HF_TOKEN set for this session.", flush=True)
+        log("INFO", "HF_TOKEN set for this session.")
     else:
-        print("Continuing without a token.", flush=True)
+        log("INFO", "Continuing without a token.")
 
 
 def _load_wav_mono16k(wav_path: str) -> Optional["np.ndarray"]:
@@ -966,9 +995,15 @@ def format_lrc(
 
     # Format as LRC
     lrc_lines = []
+    prev_start = None
     for lt in adjusted:
-        minutes = int(lt.start // 60)
-        seconds = lt.start % 60
+        start = lt.start
+        if prev_start is not None:
+            while round(start, 2) <= round(prev_start, 2):
+                start = round(prev_start, 2) + 0.01
+        prev_start = start
+        minutes = int(start // 60)
+        seconds = start % 60
         lrc_lines.append(f"[{minutes:02d}:{seconds:05.2f}]{lt.line}")
 
     return "\n".join(lrc_lines) + "\n"
@@ -990,6 +1025,7 @@ def align(
     drop_looped: bool = True,
     similarity_mode: str = "bigram",
     accept_threshold: float = 0.2,
+    method: str = "whisper",
 ) -> AlignmentResult:
     """
     Full alignment pipeline: audio + lyrics → LRC.
@@ -1049,7 +1085,7 @@ def align(
             if script_lang:
                 language = script_lang
                 result.detected_language = language
-                print(f"Detected language from lyrics script: {language}", flush=True)
+                log("INFO", f"Detected language from lyrics script: {language}")
                 if progress_callback:
                     progress_callback("detecting_language", 100, f"Detected from text: {language}")
             else:
@@ -1057,7 +1093,7 @@ def align(
                     progress_callback("detecting_language", 0, "Detecting language (tiny model)...")
                 try:
                     language, prob = detect_language_tiny(wav_path)
-                    print(f"Detected language: {language} ({prob:.0%})", flush=True)
+                    log("INFO", f"Detected language: {language} ({prob:.0%})")
                     if progress_callback:
                         progress_callback("detecting_language", 100, f"Detected: {language} ({prob:.0%})")
                 except Exception:
@@ -1080,18 +1116,18 @@ def align(
         else:
             vocals_path = wav_path
 
-        words, skipped_looped = transcribe_with_whisper(
-            vocals_path, model_size, language, progress_callback=progress_callback,
+        backend = get_backend(method)
+        backend_warnings = []
+        words = backend(
+            vocals_path, lyrics_lines, language, model_size,
+            progress_callback=progress_callback,
             temperature=temperature, beam_size=beam_size, best_of=best_of,
             initial_prompt=initial_prompt,
             fallback_temperatures=fallback_temperatures,
             drop_looped=drop_looped,
+            warnings=backend_warnings,
         )
-        if skipped_looped:
-            result.warnings.append(
-                f"Skipped {skipped_looped} looped transcription segment(s) "
-                f"(repetition hallucination). Timestamps may be sparse there."
-            )
+        result.warnings.extend(backend_warnings)
 
         if not words:
             result.warnings.append("Whisper returned no word timestamps")
