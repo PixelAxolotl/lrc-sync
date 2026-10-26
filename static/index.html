@@ -122,6 +122,8 @@
         .tabs { display: flex; gap: 0.5rem; margin-bottom: 1rem; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 0.5rem; }
         .tab { width: auto; padding: 0.45rem 1.1rem; background: var(--field); border: 1px solid var(--field-border); font-weight: 600; }
         .tab.active { background: var(--accent); border-color: var(--accent); }
+        .check-row { background: var(--field); border: 1px solid var(--field-border); border-radius: 8px; padding: 0.6rem 0.8rem; margin-top: 0.5rem; font-size: 0.9rem; }
+        .check-row.published { border-color: var(--accent); outline: 2px solid var(--accent); }
         #tabAdvancedPanel .row > div > label { cursor: help; }
         #tabAdvancedPanel .row > div { padding: 0.25rem 0; }
         .tip-wrap { position: relative; }
@@ -179,6 +181,7 @@
                 <button id="tabAdvanced" class="tab" onclick="showTab('advanced')">Advanced</button>
                 <button id="tabPaxsenix" class="tab" onclick="showTab('paxsenix')">Paxsenix</button>
                 <button id="tabLrclib" class="tab" onclick="showTab('lrclib')">LRCLIB Upload</button>
+                <button id="tabCheck" class="tab" onclick="showTab('check')">Search LRCLIB</button>
             </div>
             <div id="tabMainPanel">
             <div class="row">
@@ -200,6 +203,14 @@
                         <option value="medium.en">Medium.en (English-only)</option>
                     </select>
                     <div id="enWarning" style="display:none; margin-top:0.4rem; font-size:0.82rem; color:var(--danger);">⚠ English-only model: poor/non-English lyrics will transcribe badly. Use a multilingual model for ja/zh/ko/etc.</div>
+                </div>
+                <div>
+                    <label for="method">Alignment method</label>
+                    <select id="method">
+                        <option value="whisper" selected>Whisper (default)</option>
+                        <option value="whisperx">WhisperX</option>
+                        <option value="stable-ts">stable-ts</option>
+                    </select>
                 </div>
             </div>
             <div class="row">
@@ -301,6 +312,7 @@
             <div id="tabLrclibPanel" style="display:none;">
                 <label for="lrclibLrc">Lyrics <span class="hint">(paste synced LRC or plain lyrics, or load a file below)</span></label>
                 <textarea id="lrclibLrc" placeholder="[00:12.00]First line of lyrics&#10;[00:17.50]Second line of lyrics"></textarea>
+                <div id="lrclibIssues" class="error" role="alert"></div>
                 <div class="row" style="margin-top:1rem;">
                     <div>
                         <label for="lrclibTrack">Song name</label>
@@ -331,6 +343,33 @@
                 <button id="lrclibPublishBtn" onclick="publishToLrclib()">Upload to LRCLIB</button>
                 <button id="lrclibRetryBtn" class="download-btn" style="display:none;" onclick="retryLookup()">Check again for ID</button>
                 <div id="lrclibStatus" class="status" role="status"></div>
+            </div>
+            <div id="tabCheckPanel" style="display:none;">
+            <div class="row">
+                    <div>
+                        <label for="searchTrack">Song name</label>
+                        <input type="text" id="searchTrack" placeholder="Track title">
+                    </div>
+                    <div>
+                        <label for="searchArtist">Artist</label>
+                        <input type="text" id="searchArtist" placeholder="Artist name">
+                    </div>
+                </div>
+                <div class="row">
+                    <div>
+                        <label for="searchDuration">Duration (seconds)</label>
+                        <input type="number" id="searchDuration" placeholder="e.g. 215" min="1" step="1">
+                        <small id="searchDurationHint" class="hint"></small>
+                    </div>
+                    <div>
+                        <label for="searchAlbum">Album (optional)</label>
+                        <input type="text" id="searchAlbum" placeholder="Album name">
+                    </div>
+                </div>
+            <button id="checkSearchBtn" onclick="searchLrclib()">Search</button>
+            <div id="checkStatus" class="status" role="status"></div>
+            <div id="checkError" class="error" role="alert"></div>
+            <div id="checkResults"></div>
             </div>
             <div id="whisperActions">
             <br><br>

@@ -57,6 +57,7 @@ function showTab(name) {
         advanced: 'tabAdvancedPanel',
         paxsenix: 'tabPaxsenixPanel',
         lrclib: 'tabLrclibPanel',
+        check: 'tabCheckPanel',
     };
     for (const [key, panelId] of Object.entries(panels)) {
         document.getElementById(panelId).style.display = name === key ? '' : 'none';
@@ -65,6 +66,7 @@ function showTab(name) {
     document.getElementById('tabAdvanced').classList.toggle('active', name === 'advanced');
     document.getElementById('tabPaxsenix').classList.toggle('active', name === 'paxsenix');
     document.getElementById('tabLrclib').classList.toggle('active', name === 'lrclib');
+    document.getElementById('tabCheck').classList.toggle('active', name === 'check');
     // Whisper controls only belong to the alignment flow.
     const isAlignTab = name === 'main' || name === 'advanced';
     document.getElementById('whisperActions').style.display = isAlignTab ? '' : 'none';
@@ -72,7 +74,9 @@ function showTab(name) {
         // Hand a freshly generated LRC over, but never clobber typed or loaded text.
         const box = document.getElementById('lrclibLrc');
         if (box && !box.value.trim() && lrcResult) box.value = lrcResult;
+        syncLrclibFields('search');
     }
+    if (name === 'check') syncLrclibFields('lrclib');
 }
 
 function updateEnWarning() {
@@ -103,6 +107,31 @@ if (hfTokenBox) {
 const lyricsBox = document.getElementById("lyrics");
 if (lyricsBox) lyricsBox.addEventListener("input", resetLanguageDropdown);
 
+// Search and Upload panels share the same song fields — keep each pair in sync.
+const lrclibPairs = [["lrclibTrack", "searchTrack"], ["lrclibArtist", "searchArtist"], ["lrclibDuration", "searchDuration"], ["lrclibAlbum", "searchAlbum"]];
+function syncLrclibFields(from) {
+    const fromSearch = from === "search" || (from && from.startsWith("search"));
+    for (const [a, b] of lrclibPairs) {
+        const elA = document.getElementById(a);
+        const elB = document.getElementById(b);
+        if (!elA || !elB) continue;
+        const src = fromSearch ? elB : elA;
+        const dst = fromSearch ? elA : elB;
+        if (from) dst.value = src.value;
+        else if (!dst.value) dst.value = src.value;
+        else if (!src.value) src.value = dst.value;
+    }
+    const hintA = document.getElementById("lrclibDurationHint");
+    const hintB = document.getElementById("searchDurationHint");
+    if (hintA && hintB) (fromSearch ? hintA : hintB).textContent = (fromSearch ? hintB : hintA).textContent;
+}
+for (const [a, b] of lrclibPairs) {
+    for (const [id, other] of [[a, b], [b, a]]) {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener("input", () => syncLrclibFields(id));
+    }
+}
+
 // LRC files in the wild are often Shift-JIS, which FileReader's UTF-8 default
 // turns into mojibake, so try each encoding strictly and keep the first that
 // decodes cleanly.
@@ -117,6 +146,52 @@ function decodeLyrics(buffer) {
     return new TextDecoder().decode(buffer);
 }
 
+function validateLrc(text) {
+    const duplicates = [], out_of_order = [];
+    let prev = null, maxSoFar = null;
+    text.split("\n").forEach((line, idx) => {
+        const m = line.match(/\[(\d{2}):(\d{2})\.(\d{2})\]/);
+        if (!m) return;
+        const t = (+m[1]) * 60 + (+m[2]) + (+m[3]) / 100;
+        if (prev !== null && t === prev) duplicates.push(idx + 1);
+        else if (maxSoFar !== null && t < maxSoFar) out_of_order.push(idx + 1);
+        prev = t;
+        maxSoFar = maxSoFar === null ? t : Math.max(maxSoFar, t);
+    });
+    return { duplicates, out_of_order };
+}
+
+function lrcIssuesText(v, text) {
+    const lines = text != null ? String(text).split("\n") : null;
+    const fmt = (nums) => {
+        const arr = nums || [];
+        const shown = arr.slice(0, 3).map((n) => {
+            if (!lines) return `line ${n}`;
+            return `line ${n}: "${((lines[n - 1] || "").trim().slice(0, 60))}"`;
+        });
+        return shown.join(", ") + (arr.length > 3 ? ` (+${arr.length - 3} more)` : "");
+    };
+    const parts = [];
+    if ((v.duplicates || []).length) parts.push(`duplicates ${fmt(v.duplicates)}`);
+    if ((v.out_of_order || []).length) parts.push(`out of order ${fmt(v.out_of_order)}`);
+    return parts.join("; ");
+}
+
+function setPublishEnabled(ok) {
+    const btn = document.getElementById("lrclibPublishBtn");
+    if (btn) btn.disabled = !ok;
+}
+
+function updateLrcIssues() {
+    const box = document.getElementById("lrclibLrc");
+    const v = box ? box.value : "";
+    const issues = lrcIssuesText(validateLrc(v), v);
+    const el = document.getElementById("lrclibIssues");
+    if (el) el.textContent = issues;
+    setPublishEnabled(!issues);
+    return issues;
+}
+
 const lrclibFileBox = document.getElementById("lrclibFile");
 if (lrclibFileBox) {
     lrclibFileBox.addEventListener("change", () => {
@@ -127,6 +202,7 @@ if (lrclibFileBox) {
         const reader = new FileReader();
         reader.onload = () => {
             box.value = decodeLyrics(reader.result);
+            updateLrcIssues();
             if (status) {
                 const lines = box.value.split("\n").filter((l) => l.trim()).length;
                 status.textContent = `Loaded ${file.name} — ${lines} non-empty line${lines === 1 ? "" : "s"}.`;
@@ -138,6 +214,9 @@ if (lrclibFileBox) {
         reader.readAsArrayBuffer(file);
     });
 }
+
+const lrclibLrcBox = document.getElementById("lrclibLrc");
+if (lrclibLrcBox) lrclibLrcBox.addEventListener("input", updateLrcIssues);
 
 const downloadModelsBtn = document.getElementById("downloadModelsBtn");
 if (downloadModelsBtn) {
@@ -223,6 +302,7 @@ async function align() {
     const youtubeUrl = document.getElementById("youtubeUrl").value.trim();
     const lyrics = document.getElementById("lyrics").value;
     const model = document.getElementById("model").value;
+    const method = document.getElementById("method")?.value || "whisper";
     const language = document.getElementById("language").value || null;
     const offset = parseFloat(document.getElementById("offset").value) || 0;
     const temperature = parseFloat(document.getElementById("temperature").value) || 0;
@@ -262,6 +342,7 @@ async function align() {
     }
     formData.append("lyrics", lyrics);
     formData.append("model", model);
+    formData.append("method", method);
     if (language) formData.append("language", language);
     formData.append("offset", offset);
     formData.append("temperature", temperature);
@@ -393,6 +474,7 @@ function autofillDuration(duration) {
     field.value = Math.round(duration);
     const hint = document.getElementById("lrclibDurationHint");
     if (hint) hint.textContent = `auto-filled from audio length (${duration.toFixed(1)}s)`;
+    syncLrclibFields("lrclib");
 }
 
 function updateSyncButtonLabel(filename) {
@@ -537,6 +619,11 @@ async function publishToLrclib() {
         publishStatus.textContent = "Enter a valid duration in seconds.";
         return;
     }
+    const issues = updateLrcIssues();
+    if (issues) {
+        document.getElementById("lrclibIssues").textContent = `Fix timestamps before publishing: ${issues}.`;
+        return;
+    }
 
     publishStatus.textContent = "Publishing to LRCLIB (solving proof-of-work)...";
     btn.disabled = true;
@@ -555,11 +642,13 @@ async function publishToLrclib() {
         });
         const data = await response.json();
         if (!response.ok) {
-            throw new Error(data.message || `Server error: ${response.status}`);
+            const extra = lrcIssuesText({ duplicates: data.duplicates, out_of_order: data.out_of_order }, lrc);
+            if (extra) document.getElementById("lrclibIssues").textContent = extra;
+            throw new Error((data.message || data.error || `Server error: ${response.status}`) + (extra ? ` (${extra})` : ""));
         }
-        publishStatus.textContent = data.id
-            ? `Published to LRCLIB! ID: ${data.id}`
-            : "Published to LRCLIB! ID not indexed yet — wait a bit, then hit “Check again for ID”.";
+        publishStatus.textContent = data.status === "published" && data.id
+            ? `Published! ID: ${data.id}`
+            : "Submitted — not yet visible on LRCLIB, retry search in a bit.";
         if (!data.id && retryBtn) retryBtn.style.display = "block";
     } catch (e) {
         publishStatus.textContent = `Publish failed: ${e.message}`;
@@ -577,6 +666,17 @@ async function retryLookup() {
 
     publishStatus.textContent = "Checking LRCLIB for ID...";
     try {
+        if (!duration || !isFinite(duration) || duration <= 0) {
+            const params = new URLSearchParams({ artist_name: artist, track_name: track });
+            const response = await fetch(`/api/search?${params}`);
+            const data = await response.json().catch(() => ([]));
+            if (!response.ok) {
+                throw new Error(data.error || `Server error: ${response.status}`);
+            }
+            const list = Array.isArray(data) ? data : [];
+            publishStatus.textContent = `Found ${list.length} result(s), add duration to confirm ID.`;
+            return;
+        }
         const params = new URLSearchParams({ artist, track, duration });
         const response = await fetch(`/api/lookup?${params}`);
         const data = await response.json();
@@ -584,10 +684,103 @@ async function retryLookup() {
             throw new Error(data.error || `Server error: ${response.status}`);
         }
         publishStatus.textContent = data.id
-            ? `Published to LRCLIB! ID: ${data.id}`
-            : "Published to LRCLIB!";
+            ? `Published! ID: ${data.id}`
+            : "Submitted — not yet visible on LRCLIB, retry search in a bit.";
         if (data.id && retryBtn) retryBtn.style.display = "none";
     } catch (e) {
         publishStatus.textContent = `Still not on LRCLIB: ${e.message} — wait a bit and retry.`;
+    }
+}
+
+function escHtml(s) {
+    return String(s ?? "").replace(/[&<>"']/g, (c) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+    }[c]));
+}
+
+async function searchLrclib() {
+    const val = (id, fb) => document.getElementById(id)?.value.trim() || document.getElementById(fb)?.value.trim() || "";
+    const artist = val("searchArtist", "lrclibArtist");
+    const track = val("searchTrack", "lrclibTrack");
+    const durRaw = val("searchDuration", "lrclibDuration");
+    const duration = parseFloat(durRaw);
+    const hasDuration = durRaw !== "" && isFinite(duration) && duration > 0;
+    const status = document.getElementById("checkStatus");
+    const error = document.getElementById("checkError");
+    const results = document.getElementById("checkResults");
+    const btn = document.getElementById("checkSearchBtn");
+
+    if (!artist || !track) {
+        error.textContent = "Artist and song name are required.";
+        return;
+    }
+    error.textContent = "";
+    results.innerHTML = "";
+    status.textContent = "Searching LRCLIB...";
+    btn.disabled = true;
+    try {
+        const params = new URLSearchParams({ artist_name: artist, track_name: track });
+        const response = await fetch(`/api/search?${params}`);
+        const data = await response.json().catch(() => ([]));
+        if (!response.ok) throw new Error(data.error || `Server error: ${response.status}`);
+        let list = Array.isArray(data) ? data : [];
+        if (hasDuration) {
+            list = list.slice().sort((a, b) =>
+                Math.abs((a.duration || 0) - duration) - Math.abs((b.duration || 0) - duration));
+        }
+        let publishedId = null;
+        let possibleId = null;
+        if (hasDuration) {
+            try {
+                const lookupParams = new URLSearchParams({ artist, track, duration });
+                const lookupResp = await fetch(`/api/lookup?${lookupParams}`);
+                if (lookupResp.ok) {
+                    const lookupData = await lookupResp.json();
+                    publishedId = lookupData.id ?? null;
+                }
+                // 404 just means nothing published for that duration — no highlight.
+            } catch (e) {
+                // lookup failure must not break the search listing
+            }
+            if (publishedId === null && list.length) {
+                // Exact lookup missed: closest duration within 2s is only a
+                // possible match — confirm it by id before calling it published.
+                const best = list[0];
+                if (best.duration != null && Math.abs(best.duration - duration) <= 2 && best.id != null) {
+                    try {
+                        const confirmResp = await fetch(`/api/lookup?${new URLSearchParams({ id: best.id })}`);
+                        if (confirmResp.ok) {
+                            const confirmData = await confirmResp.json();
+                            publishedId = confirmData.id ?? null;
+                        } else {
+                            possibleId = best.id;
+                        }
+                    } catch (e) {
+                        possibleId = best.id;
+                    }
+                }
+            }
+        }
+        if (!list.length) {
+            status.textContent = "No matches found.";
+            return;
+        }
+        status.textContent = `${list.length} match${list.length === 1 ? "" : "es"} found.`;
+        results.innerHTML = list.map((r) => {
+            const synced = !!((r.syncedLyrics || "").trim());
+            const isPub = publishedId !== null && r.id === publishedId;
+            const isPoss = !isPub && publishedId === null && possibleId !== null && r.id === possibleId;
+            const hl = isPub ? " published" : "";
+            const dur = r.duration != null ? `${escHtml(Math.round(r.duration))}s` : "—";
+            return `<div class="check-row${hl}"><strong>${escHtml(r.trackName)}` +
+                `</strong> — ${escHtml(r.artistName)}<br>` +
+                `<span class="hint">${escHtml(r.albumName || "no album")} · ${dur} · ` +
+                `${synced ? "synced" : "plain only"}${isPoss ? " · possible match (unconfirmed)" : ""}</span></div>`;
+        }).join("");
+    } catch (e) {
+        status.textContent = "";
+        error.textContent = `Error: ${e.message}`;
+    } finally {
+        btn.disabled = false;
     }
 }

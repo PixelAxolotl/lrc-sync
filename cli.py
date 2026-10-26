@@ -13,6 +13,7 @@ import tempfile
 from pathlib import Path
 
 from aligner import align, _build_initial_prompt
+from logger import log
 from downloader import download_audio
 
 
@@ -93,12 +94,17 @@ def main():
         help="Track duration in seconds for LRCLIB publish"
     )
     parser.add_argument("--album", help="Album name for LRCLIB publish (optional)")
-
+    parser.add_argument(
+        "--method", default="whisper",
+        choices=["whisper", "whisperx", "stable-ts"],
+        help="Alignment backend (default: whisper).",
+    )
+ 
     args = parser.parse_args()
 
     # Validate lyrics file
     if not Path(args.lyrics).exists():
-        print(f"Error: Lyrics file not found: {args.lyrics}", file=sys.stderr)
+        log("ERROR", f"Lyrics file not found: {args.lyrics}", file=sys.stderr)
         sys.exit(1)
 
     # Read lyrics
@@ -107,22 +113,22 @@ def main():
     # Get audio: download from YouTube or use local file
     temp_audio = None
     if args.youtube:
-        print(f"Downloading audio from YouTube...", file=sys.stderr)
+        log("INFO", "Downloading audio from YouTube...", file=sys.stderr)
         temp_audio = download_audio(args.youtube)
         audio_path = temp_audio
-        print(f"Downloaded to {audio_path}", file=sys.stderr)
+        log("INFO", f"Downloaded to {audio_path}", file=sys.stderr)
     else:
         if not Path(args.audio).exists():
-            print(f"Error: Audio file not found: {args.audio}", file=sys.stderr)
+            log("ERROR", f"Audio file not found: {args.audio}", file=sys.stderr)
             sys.exit(1)
         audio_path = args.audio
 
     try:
         # Run alignment
-        print(f"Aligning audio with {args.lyrics}...", file=sys.stderr)
+        log("INFO", f"Aligning audio with {args.lyrics}...", file=sys.stderr)
 
         def _progress(stage, percent, message):
-            print(f"[{stage}] {message}", file=sys.stderr)
+            log("INFO", f"[{stage}] {message}", file=sys.stderr)
 
         result = align(
             audio_path=audio_path,
@@ -139,16 +145,17 @@ def main():
             similarity_mode=args.similarity,
             accept_threshold=args.accept_threshold,
             interpolate_fallback=not args.no_interpolate,
+            method=args.method,
         )
 
         # Print warnings
         for w in result.warnings:
-            print(f"Warning: {w}", file=sys.stderr)
+            log("WARN", w, file=sys.stderr)
 
         # Output
         if args.output:
             Path(args.output).write_text(result.lrc_text, encoding="utf-8")
-            print(f"LRC written to {args.output}", file=sys.stderr)
+            log("INFO", f"LRC written to {args.output}", file=sys.stderr)
         else:
             print(result.lrc_text)
 
@@ -162,23 +169,20 @@ def main():
             sync_out_path = Path("output_sync.json")
         sync_out_path.write_text(
             words_to_json(result.words), encoding="utf-8")
-        print(f"Word sync JSON written to {sync_out_path}", file=sys.stderr)
+        log("INFO", f"Word sync JSON written to {sync_out_path}", file=sys.stderr)
 
         if args.output_words:
             Path(args.output_words).write_text(
                 words_to_json(result.words), encoding="utf-8")
-            print(f"Words JSON written to {args.output_words}", file=sys.stderr)
+            log("INFO", f"Words JSON written to {args.output_words}", file=sys.stderr)
 
         # Publish to LRCLIB
         if args.publish:
             if not args.track or not args.artist or not args.duration:
-                print(
-                    "Error: --publish requires --track, --artist, and --duration",
-                    file=sys.stderr,
-                )
+                log("ERROR", "--publish requires --track, --artist, and --duration", file=sys.stderr)
                 sys.exit(1)
             from lrclib import publish_lrc
-            print("Publishing to LRCLIB...", file=sys.stderr)
+            log("INFO", "Publishing to LRCLIB...", file=sys.stderr)
             publish_lrc(
                 track_name=args.track,
                 artist_name=args.artist,
@@ -186,7 +190,7 @@ def main():
                 lrc_text=result.lrc_text,
                 album_name=args.album,
             )
-            print("Published to LRCLIB.", file=sys.stderr)
+            log("INFO", "Published to LRCLIB.", file=sys.stderr)
     finally:
         # Clean up temp file
         if temp_audio and Path(temp_audio).exists():
