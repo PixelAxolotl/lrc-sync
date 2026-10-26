@@ -50,3 +50,37 @@ def test_align_forwards_method(monkeypatch):
     res = _aligner.align("x.wav", "hi", method="whisperx")
     assert captured["method"] == "whisperx"
     assert res.lrc_text.strip() != "" or True
+def test_whisperx_backend_missing_raises_friendly():
+    import pytest
+    # force missing
+    import builtins
+    orig = builtins.__import__
+    def fake_import(name, *a, **k):
+        if name == "whisperx" or name.startswith("whisperx."):
+            raise ImportError("no module")
+        return orig(name, *a, **k)
+    builtins.__import__ = fake_import
+    try:
+        from backends import whisperx_backend
+        with pytest.raises(RuntimeError) as ei:
+            whisperx_backend.align_audio("/tmp/a.wav", [], "en", "small")
+        assert "pip install lrc-sync[whisperx]" in str(ei.value)
+    finally:
+        builtins.__import__ = orig
+
+def test_stablets_backend_missing_raises_friendly():
+    import pytest
+    import builtins
+    orig = builtins.__import__
+    def fake_import(name, *a, **k):
+        if name == "stable_whisper" or name.startswith("stable_whisper."):
+            raise ImportError("no module")
+        return orig(name, *a, **k)
+    builtins.__import__ = fake_import
+    try:
+        from backends import stablets_backend
+        with pytest.raises(RuntimeError) as ei:
+            stablets_backend.align_audio("/tmp/a.wav", [], "en", "small")
+        assert "pip install lrc-sync[stable-ts]" in str(ei.value)
+    finally:
+        builtins.__import__ = orig
