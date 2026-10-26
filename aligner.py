@@ -995,15 +995,9 @@ def format_lrc(
 
     # Format as LRC
     lrc_lines = []
-    prev_start = None
     for lt in adjusted:
-        start = lt.start
-        if prev_start is not None:
-            while round(start, 2) <= round(prev_start, 2):
-                start = round(prev_start, 2) + 0.01
-        prev_start = start
-        minutes = int(start // 60)
-        seconds = start % 60
+        minutes = int(lt.start // 60)
+        seconds = lt.start % 60
         lrc_lines.append(f"[{minutes:02d}:{seconds:05.2f}]{lt.line}")
 
     return "\n".join(lrc_lines) + "\n"
