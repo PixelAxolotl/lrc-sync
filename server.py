@@ -5,6 +5,7 @@ Usage:
     python server.py [--host 127.0.0.1] [--port 8000]
 """
 import argparse
+import logging
 import sys
 import tempfile
 from pathlib import Path
@@ -24,6 +25,8 @@ import uuid
 
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from logger import log as _log
+
 app = FastAPI(title="lrc-sync", description="Sync lyrics with audio to create LRC files")
 
 # All-model pre-download status (for the "download all models" UI button)
@@ -42,6 +45,8 @@ class NoCacheMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         response = await call_next(request)
         response.headers["Cache-Control"] = "no-store"
+        if DEBUG and request.url.path not in ("/api/lookup", "/api/publish", "/api/search"):
+            _log("INFO", f"{request.method} {request.url.path} -> {response.status_code}")
         return response
 
 
@@ -61,6 +66,9 @@ job_sync: dict = {}
 # Always produce words.json / output_sync.json outputs
 CHARACTER_LEVEL = True
 
+DEBUG = False
+
+
 # Web UI HF-token prompt coordination
 _ui_token = {"evt": None, "token": "", "model": None}
 _current_job_id = None
@@ -79,7 +87,7 @@ def _ui_token_provider(model_name):
             job["need_token"] = model_name
     with _model_dl_lock:
         _model_dl["need_token"] = model_name
-    print(f"Waiting for HF token via web UI (model={model_name})...", flush=True)
+    _log("INFO", f"Waiting for HF token via web UI (model={model_name})...")
     evt.wait(timeout=900)
     with jobs_lock:
         job = jobs.get(_current_job_id)
@@ -94,6 +102,8 @@ def _ui_token_provider(model_name):
 # Cancel events per running job
 job_cancel: dict = {}
 
+_job_log: dict = {}
+
 
 def _update_job(job_id: str, stage: str, percent: int, message: str):
     with jobs_lock:
@@ -103,6 +113,9 @@ def _update_job(job_id: str, stage: str, percent: int, message: str):
                 "percent": percent,
                 "message": message,
             })
+    if DEBUG and _job_log.get(job_id) != (stage, percent // 10):
+        _job_log[job_id] = (stage, percent // 10)
+        _log("INFO", f"/api/jobs {job_id} {stage} {percent}% {message}")
 
 
 def sync_filename(title: Optional[str] = None, fallback: Optional[str] = None) -> str:
@@ -134,6 +147,7 @@ def _run_job(
     similarity_mode: str = "bigram",
     accept_threshold: float = 0.2,
     source_filename: str = None,
+    method: str = "whisper",
 ):
     """Background worker: download (if URL) + align, storing progress."""
     global _current_job_id
@@ -179,6 +193,7 @@ def _run_job(
             separate_vocals=separate_vocals,
             similarity_mode=similarity_mode,
             accept_threshold=accept_threshold,
+            method=method,
         )
         with jobs_lock:
             jobs[job_id].update({
@@ -238,6 +253,7 @@ async def create_job(
     separate_vocals: bool = Form(False),
     similarity: str = Form("bigram"),
     accept_threshold: float = Form(0.2),
+    method: str = Form("whisper"),
     hf_token: str = Form(None),
 ):
     """Start an alignment job. Returns {"job_id": ...} immediately."""
@@ -294,6 +310,7 @@ async def create_job(
             "accept_threshold": accept_threshold,
             "cleanup_paths": cleanup_paths,
             "source_filename": audio.filename if audio is not None else None,
+            "method": method,
         },
         daemon=True,
     )
@@ -386,6 +403,7 @@ async def align_endpoint(
     language: str = Form(None),
     offset: float = Form(0.0),
     separate_vocals: bool = Form(False),
+    method: str = Form("whisper"),
 ):
     """Upload audio + lyrics, return synced LRC text."""
     # Save uploaded audio to temp file
@@ -403,6 +421,7 @@ async def align_endpoint(
             language=language,
             offset=offset,
             separate_vocals=separate_vocals,
+            method=method,
         )
         return result.lrc_text
     finally:
@@ -417,6 +436,7 @@ async def youtube_endpoint(
     language: str = Form(None),
     offset: float = Form(0.0),
     separate_vocals: bool = Form(False),
+    method: str = Form("whisper"),
 ):
     """Download from YouTube, then align with lyrics. Returns LRC text."""
     import tempfile
@@ -432,6 +452,7 @@ async def youtube_endpoint(
             language=language,
             offset=offset,
             separate_vocals=separate_vocals,
+            method=method,
         )
         return result.lrc_text
     finally:
@@ -509,13 +530,20 @@ async def paxsenix_endpoint(id: str):
 
 
 @app.get("/api/lookup")
-async def lookup_endpoint(artist: str, track: str, duration: float):
+async def lookup_endpoint(artist: str = None, track: str = None, duration: float = None, id: int = None):
     """Retry ID lookup without re-publishing. Returns {"id": ...} or 404."""
     from fastapi.responses import JSONResponse
-    from lrclib import lookup_record
+    from lrclib import get_by_id, lookup_record
 
+    if DEBUG:
+        _log("INFO", f"/api/lookup artist={artist!r} track={track!r} duration={duration!r} id={id!r}")
     try:
-        record = lookup_record(artist, track, duration)
+        if id is not None:
+            record = get_by_id(id)
+        elif artist and track and duration:
+            record = lookup_record(artist, track, duration)
+        else:
+            return JSONResponse(status_code=400, content={"error": "Provide id, or artist + track + duration"})
     except RuntimeError as e:
         return JSONResponse(status_code=400, content={"error": str(e)})
     if record is None:
@@ -532,15 +560,29 @@ async def publish_endpoint(
     album: str = Form(None),
 ):
     """Publish synced LRC to LRCLIB. Returns {"status", "id"}."""
-    from lrclib import lookup_record
+    from lrclib import lookup_record, validate_lrc
 
+    if DEBUG:
+        _log("INFO", f"/api/publish track={track!r} artist={artist!r} duration={duration!r} album={album!r} lrc_len={len(lrc)}")
     try:
+        problems = validate_lrc(lrc)
+        if problems["duplicates"] or problems["out_of_order"]:
+            from fastapi.responses import JSONResponse
+            msg = "LRC timestamps must be strictly increasing"
+            return JSONResponse(status_code=400, content={
+                "status": "error", "error": msg, "message": msg,
+                "duplicates": problems["duplicates"],
+                "out_of_order": problems["out_of_order"],
+            })
         result = publish_lrc(
             track_name=track,
             artist_name=artist,
             duration=duration,
             lrc_text=lrc,
             album_name=album,
+            progress_callback=lambda nonce, hps=0: (
+                _log("INFO", f"/api/publish challenge {hps:.0f} H/s")
+            ),
         )
         entry_id = result.get("id")
         if entry_id is None:
@@ -551,10 +593,35 @@ async def publish_endpoint(
                     entry_id = record.get("id")
             except RuntimeError:
                 pass
+        if DEBUG:
+            _log("WARN" if entry_id is None else "INFO", f"/api/publish verification result={result!r} entry_id={entry_id!r}")
+        if entry_id is None:
+            from fastapi.responses import JSONResponse
+            return JSONResponse(status_code=202, content={
+                "status": "submitted", "id": None,
+                "reason": "not-yet-visible", "response": result,
+            })
         return {"status": "published", "id": entry_id, "response": result}
     except (ValueError, RuntimeError) as e:
         from fastapi.responses import JSONResponse
         return JSONResponse(status_code=400, content={"status": "error", "message": str(e)})
+
+
+@app.get("/api/search")
+async def search_endpoint(artist_name: str, track_name: str):
+    """Search LRCLIB for matching tracks. Returns the raw result list."""
+    from fastapi.responses import JSONResponse
+    from lrclib import search_records
+
+    if DEBUG:
+        _log("INFO", f"/api/search artist_name={artist_name!r} track_name={track_name!r}")
+    try:
+        results = search_records(artist_name, track_name)
+        if DEBUG:
+            _log("WARN" if not results else "INFO", f"/api/search -> {len(results)} result(s)")
+        return results
+    except RuntimeError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
 
 
 # Serve static files (web UI)
@@ -575,11 +642,16 @@ def main():
         "--characterlevel", action="store_true",
         help="Enable word/character-level JSON endpoints and UI buttons",
     )
+    parser.add_argument(
+        "--debug", action="store_true",
+        help="Enable verbose debug logs",
+    )
     # (--silent removed: console output is always on now)
     args = parser.parse_args()
 
-    global CHARACTER_LEVEL
+    global CHARACTER_LEVEL, DEBUG
     CHARACTER_LEVEL = bool(args.characterlevel)
+    DEBUG = bool(args.debug)
 
     if not args.no_browser:
         import threading
@@ -593,7 +665,16 @@ def main():
             webbrowser.open(url)
 
         threading.Thread(target=_open, daemon=True).start()
-        print(f"Opening {url} in your browser...")
+        _log("INFO", f"Opening {url} in your browser...")
+
+    # Route any third-party/library logs through the same colored formatter.
+    from logger import UvicornDefaultFormatter
+    _root = logging.getLogger()
+    if not _root.handlers:
+        _h = logging.StreamHandler()
+        _h.setFormatter(UvicornDefaultFormatter())
+        _root.addHandler(_h)
+        _root.setLevel(logging.INFO)
 
     import uvicorn
 
@@ -602,7 +683,13 @@ def main():
     # (python/cpython#93821). Use a SelectorEventLoop instead: it survives
     # per-connection resets instead of killing the server. See eventloop.py.
     loop = "eventloop:selector_loop_factory" if sys.platform == "win32" else "auto"
-    uvicorn.run(app, host=args.host, port=args.port, access_log=False, loop=loop)
+    import copy
+    from uvicorn.config import LOGGING_CONFIG
+    # Patching loggers here is a no-op: uvicorn.run reinstalls handlers via dictConfig afterwards.
+    log_config = copy.deepcopy(LOGGING_CONFIG)
+    log_config["formatters"]["default"] = {"()": "logger.UvicornDefaultFormatter"}
+    log_config["formatters"]["access"] = {"()": "logger.UvicornAccessFormatter"}
+    uvicorn.run(app, host=args.host, port=args.port, log_level="debug" if DEBUG else "info", access_log=True, loop=loop, log_config=log_config)
 
 
 if __name__ == "__main__":
