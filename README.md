@@ -150,6 +150,9 @@ Scores are reproducible with `python temp/bench/readme_bench.py` (see
 `temp/bench/RESULTS.md`); re-running after a code change is a valid regression
 check. Runtimes are from a cold cache — a warm one reports ~1s per model.
 
+See **Alignment methods** (below) for a comparison of the Whisper / WhisperX /
+stable-ts backends on the same tracks.
+
 ### Model comparison (shipped defaults)
 
 | model | lines within 1s | within 2s | median error | max error | 5-track time |
