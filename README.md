@@ -102,6 +102,23 @@ comparison above, with the `medium` model and shipped matcher defaults:
 non-speech on several tracks, leaving too few words to align. WhisperX may
 still help on speech-like or well-separated vocal tracks.
 
+The same comparison across all six model sizes (Japanese, 5 tracks, shipped
+matcher defaults):
+
+| model | whisper | stable-ts |
+|---|---|---|
+| `tiny` | 63.8% | 70.1% |
+| `base` | 74.9% | 75.9% |
+| `small` | 83.6% | 84.5% |
+| **`medium`** (default) | **87.4%** | **90.3%** |
+| `large-v3-turbo` | 79.7% | 82.1% |
+| `large-v3` | 79.2% | 88.4% |
+
+`stable-ts` improves every model size; `large-v3` under stable-ts (88.4%)
+nearly matches `medium` stable-ts (90.3%) while `medium` stays ~4× faster.
+`whisperx` was only benchmarked on `medium` (34.8%) and is not recommended
+on this corpus.
+
 - `whisper` (default): faster-whisper transcription + the fuzzy matcher above.
   Works offline from the local model cache.
 - `whisperx`: Whisper transcription followed by wav2vec2 forced alignment.
