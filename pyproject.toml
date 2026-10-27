@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-whisperx = ["whisperx>=3.0.0"]
+whisperx = ["whisperx>=3.0.0", "pyannote-audio>=4.0.0"]
 stable-ts = ["stable-ts>=2.0.0"]
 
 [tool.setuptools]

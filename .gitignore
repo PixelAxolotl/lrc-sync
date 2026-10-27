@@ -32,3 +32,8 @@ run_server_*.bat
 test/
 
 pytest.ini
+
+# Build artifacts
+*.egg-info/
+# Runtime logs
+temp_server.log

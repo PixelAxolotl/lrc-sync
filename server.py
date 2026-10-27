@@ -6,6 +6,7 @@ Usage:
 """
 import argparse
 import logging
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -26,6 +27,8 @@ import uuid
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from logger import log as _log
+from logger import JobPollFilter as _JobPollFilter
+JobPollFilter = _JobPollFilter
 
 app = FastAPI(title="lrc-sync", description="Sync lyrics with audio to create LRC files")
 
@@ -39,14 +42,23 @@ _model_dl = {
 }
 
 
+_JOB_POLL_PATH_RE = re.compile(r"^/api/jobs/[^/]+$")
+
+
 class NoCacheMiddleware(BaseHTTPMiddleware):
     """Disable browser caching so UI updates always take effect immediately."""
 
     async def dispatch(self, request, call_next):
         response = await call_next(request)
         response.headers["Cache-Control"] = "no-store"
-        if DEBUG and request.url.path not in ("/api/lookup", "/api/publish", "/api/search"):
-            _log("INFO", f"{request.method} {request.url.path} -> {response.status_code}")
+        path = request.url.path
+        is_job_poll = (
+            request.method == "GET"
+            and _JOB_POLL_PATH_RE.match(path) is not None
+            and response.status_code == 200
+        )
+        if DEBUG and path not in ("/api/lookup", "/api/publish", "/api/search") and not is_job_poll:
+            _log("INFO", f"{request.method} {path} -> {response.status_code}")
         return response
 
 
@@ -689,6 +701,8 @@ def main():
     log_config = copy.deepcopy(LOGGING_CONFIG)
     log_config["formatters"]["default"] = {"()": "logger.UvicornDefaultFormatter"}
     log_config["formatters"]["access"] = {"()": "logger.UvicornAccessFormatter"}
+    log_config["filters"] = {"job_poll": {"()": "logger.JobPollFilter"}}
+    log_config["handlers"]["access"]["filters"] = ["job_poll"]
     uvicorn.run(app, host=args.host, port=args.port, log_level="debug" if DEBUG else "info", access_log=True, loop=loop, log_config=log_config)
 
 

@@ -23,6 +23,15 @@ Sync lyrics with audio to create LRC files using Whisper forced alignment.
 pip install -r requirements.txt
 ```
 
+Optional alignment backends are installed from the repo root (the package is not
+published to PyPI, so do not use `pip install lrc-sync[...]`):
+
+```bash
+pip install -e .[stable-ts]
+# or
+pip install -e .[whisperx]
+```
+
 ## Usage
 
 ### Web UI

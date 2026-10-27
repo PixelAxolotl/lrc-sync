@@ -8,7 +8,9 @@ and must NOT go through here.
 from copy import copy as _copy
 import logging
 import os
+import re
 import sys
+import threading
 
 GREEN = "\x1b[32m"
 YELLOW = "\x1b[33m"
@@ -41,6 +43,11 @@ def _enable_windows_ansi():
 _enable_windows_ansi()
 
 
+# Serializes console writes so a logger INFO line can never be appended to an
+# in-flight progress line (e.g. yt-dlp/ffmpeg) emitted by another thread.
+_LOG_LOCK = threading.Lock()
+
+
 def log(kind, msg, file=sys.stdout, end="\n"):
     """Print one ``[KIND] msg`` line in the shared color/style."""
     color = _COLORS.get(kind, GREEN)
@@ -48,7 +55,8 @@ def log(kind, msg, file=sys.stdout, end="\n"):
     prefix = ""
     if text.startswith("\r"):
         prefix, text = "\r", text[1:]
-    print(f"{prefix}{color}[{kind}]{RESET} {text}", file=file, flush=True, end=end)
+    with _LOG_LOCK:
+        print(f"{prefix}{color}[{kind}]{RESET} {text}", file=file, flush=True, end=end)
 
 
 class ColorFormatter(logging.Formatter):
@@ -123,3 +131,47 @@ class UvicornAccessFormatter(_UvAccess):
             recordcopy.__dict__["message"] = recordcopy.getMessage()
         recordcopy.__dict__["levelprefix"] = f"{color}[{level}]{RESET}"
         return logging.Formatter.formatMessage(self, recordcopy)
+
+# Filter successful polling of GET /api/jobs/{id} from uvicorn's access log.
+# The frontend polls this endpoint frequently; logging every 200 floods output.
+# Errors/warnings (non-200 or other paths) are kept.
+_JOB_POLL_PATH_RE = re.compile(r"^/api/jobs/[^/?#]+$")
+
+
+class JobPollFilter(logging.Filter):
+    def filter(self, record):
+        method = None
+        path = None
+        status = None
+        args = getattr(record, "args", None)
+        if isinstance(args, (tuple, list)) and len(args) >= 5:
+            try:
+                method = str(args[1])
+                path = str(args[2])
+                status = int(args[4])
+            except (TypeError, ValueError, IndexError):
+                method = path = status = None
+        if method is None or path is None or status is None:
+            try:
+                msg = record.getMessage()
+            except Exception:
+                msg = str(getattr(record, "msg", ""))
+            m = re.search(r'"([A-Z]+)\s+(\S+)\s+HTTP/[^"]*"\s+(\d{3})', msg)
+            if m:
+                method, path, status = m.group(1), m.group(2), int(m.group(3))
+        if method == "GET" and status == 200 and path is not None:
+            clean = path.split("?", 1)[0].split("#", 1)[0]
+            if _JOB_POLL_PATH_RE.match(clean):
+                return False
+        return True
+
+
+# Aliases for compatibility with possible naming in callers/tests.
+JobPollAccessFilter = JobPollFilter
+JobPollingFilter = JobPollFilter
+PollingFilter = JobPollFilter
+AccessLogFilter = JobPollFilter
+SuppressJobPollFilter = JobPollFilter
+JobPollSuccessFilter = JobPollFilter
+
+job_poll_filter = JobPollFilter()

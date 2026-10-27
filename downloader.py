@@ -195,6 +195,11 @@ def download_audio_with_info(
         }],
         "quiet": True,
         "no_warnings": True,
+        # yt-dlp's default progress bar writes "[download] ... ETA ..." to
+        # stdout without a trailing newline, which collides with our logger's
+        # INFO lines. Progress is already reported through progress_hooks (and
+        # surfaced to the UI via the job dict), so suppress the stdout bar.
+        "noprogress": True,
         # Fix Windows encoding issues with non-ASCII characters
         "encoding": "utf-8",
         # Use multiple clients to avoid blocks

@@ -135,3 +135,51 @@ def test_whisperx_backend_forwards_progress(monkeypatch):
     percents = [c[1] for c in calls]
     assert 10 in percents
     assert 50 in percents
+
+
+def test_whisperx_backend_hub_error_raises_runtimeerror(monkeypatch):
+    import sys, types, pytest
+    monkeypatch.delitem(sys.modules, "whisperx", raising=False)
+    fake_mod = types.ModuleType("whisperx")
+    def boom(*a, **k):
+        raise Exception("hub miss")
+    fake_mod.load_model = boom
+    fake_mod.load_audio = lambda p: [0, 0]
+    fake_mod.load_align_model = lambda language_code=None, device=None, **k: (None, None)
+    fake_mod.align = lambda *a, **k: {"segments": []}
+    monkeypatch.setitem(sys.modules, "whisperx", fake_mod)
+
+    from backends import whisperx_backend
+    with pytest.raises(RuntimeError) as ei:
+        whisperx_backend.align_audio("/tmp/a.wav", [], "en", "small")
+    assert "small" in str(ei.value)
+
+def test_whisperx_backend_align_timeout_raises_runtimeerror(monkeypatch):
+    import sys, types, time, pytest
+    monkeypatch.delitem(sys.modules, "whisperx", raising=False)
+    fake_mod = types.ModuleType("whisperx")
+    class FakeModel:
+        def transcribe(self, audio, language=None, batch_size=16,
+                       progress_callback=None, **kw):
+            return {"segments": [], "language": language or "en"}
+    fake_mod.load_model = lambda *a, **k: FakeModel()
+    fake_mod.load_audio = lambda p: [0, 0]
+    def blocking(*a, **k):
+        time.sleep(0.2)
+        raise TimeoutError("hub lock wait")
+    fake_mod.load_align_model = blocking
+    fake_mod.align = lambda *a, **k: {"segments": []}
+    monkeypatch.setitem(sys.modules, "whisperx", fake_mod)
+
+    from backends import whisperx_backend
+    for _name in ("_ALIGN_MODEL_LOAD_TIMEOUT", "ALIGN_MODEL_LOAD_TIMEOUT",
+                  "_ALIGN_LOAD_TIMEOUT", "ALIGN_LOAD_TIMEOUT",
+                  "_ALIGN_TIMEOUT", "ALIGN_TIMEOUT"):
+        monkeypatch.setattr(whisperx_backend, _name, 0.05, raising=False)
+    calls = []
+    def cb(stage, pct, msg):
+        calls.append((stage, pct, msg))
+    with pytest.raises(RuntimeError) as ei:
+        whisperx_backend.align_audio("/tmp/a.wav", [], "en", "small", progress_callback=cb)
+    msg = str(ei.value).lower()
+    assert "lock" in msg or "timeout" in msg
