@@ -16,7 +16,22 @@ def align_audio(audio_path, lines, lang, model_size, progress_callback=None,
     audio = whisperx.load_audio(audio_path)
     if progress_callback:
         progress_callback("transcribing", 0, "Transcribing...")
-    result = model.transcribe(audio, language=lang, batch_size=16)
+    def _wx_cb(pct, *rest):
+        if isinstance(pct, (tuple, list)):
+            if len(pct) >= 2 and pct[1]:
+                pct = pct[0] / pct[1] * 100
+            else:
+                pct = pct[0] if pct else 0
+        elif rest and rest[0]:
+            try:
+                pct = pct / rest[0] * 100
+            except Exception:
+                pass
+        p = int(pct) if pct is not None else 0
+        p = max(0, min(100, p))
+        if progress_callback:
+            progress_callback("transcribing", max(0, min(99, p)), f"Transcribing... {p}%")
+    result = model.transcribe(audio, language=lang, batch_size=16, progress_callback=_wx_cb)
     detected = result.get("language", lang)
     model_a, metadata = whisperx.load_align_model(language_code=detected, device=device)
     result = whisperx.align(result["segments"], model_a, metadata, audio, device, return_char_alignments=False)

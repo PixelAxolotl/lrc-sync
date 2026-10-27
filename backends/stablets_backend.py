@@ -9,7 +9,22 @@ def align_audio(audio_path, lines, lang, model_size, progress_callback=None, **k
     model = stable_whisper.load_model(model_size)
     if progress_callback:
         progress_callback("transcribing", 0, "Transcribing...")
-    res = model.transcribe(audio_path, language=lang, word_timestamps=True)
+    def _st_cb(seek, total=None, *rest):
+        if isinstance(seek, (tuple, list)):
+            if len(seek) >= 2 and seek[1]:
+                total = seek[1]
+                seek = seek[0]
+            else:
+                seek = seek[0] if seek else 0
+                total = None
+        if total:
+            pct = int(seek / total * 100)
+        else:
+            pct = int(seek)
+        pct = max(0, min(100, pct))
+        if progress_callback:
+            progress_callback("transcribing", max(0, min(99, pct)), f"Transcribing... {pct}%")
+    res = model.transcribe(audio_path, language=lang, word_timestamps=True, progress_callback=_st_cb)
     words = []
     for seg in getattr(res, "segments", []) or []:
         for w in getattr(seg, "words", []) or []:

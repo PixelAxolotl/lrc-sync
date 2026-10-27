@@ -84,3 +84,54 @@ def test_stablets_backend_missing_raises_friendly():
         assert "pip install lrc-sync[stable-ts]" in str(ei.value)
     finally:
         builtins.__import__ = orig
+
+
+def test_stablets_backend_forwards_progress(monkeypatch):
+    import sys, types
+    monkeypatch.delitem(sys.modules, "stable_whisper", raising=False)
+    fake_mod = types.ModuleType("stable_whisper")
+    class FakeModel:
+        def transcribe(self, audio_path, language=None, word_timestamps=True,
+                       progress_callback=None, **kw):
+            if progress_callback is not None:
+                progress_callback(10, 100)
+                progress_callback(50, 100)
+            return types.SimpleNamespace(segments=[])
+    fake_mod.load_model = lambda size: FakeModel()
+    monkeypatch.setitem(sys.modules, "stable_whisper", fake_mod)
+
+    from backends import stablets_backend
+    calls = []
+    def cb(stage, pct, msg):
+        calls.append((stage, pct, msg))
+    stablets_backend.align_audio("/tmp/a.wav", [], "en", "small", progress_callback=cb)
+    percents = [c[1] for c in calls]
+    assert 10 in percents
+    assert 50 in percents
+
+
+def test_whisperx_backend_forwards_progress(monkeypatch):
+    import sys, types
+    monkeypatch.delitem(sys.modules, "whisperx", raising=False)
+    fake_mod = types.ModuleType("whisperx")
+    class FakeModel:
+        def transcribe(self, audio, language=None, batch_size=16,
+                       progress_callback=None, **kw):
+            if progress_callback is not None:
+                progress_callback(10)
+                progress_callback(50)
+            return {"segments": [], "language": language or "en"}
+    fake_mod.load_model = lambda *a, **k: FakeModel()
+    fake_mod.load_audio = lambda p: [0, 0]
+    fake_mod.load_align_model = lambda language_code=None, device=None: (None, None)
+    fake_mod.align = lambda *a, **k: {"segments": []}
+    monkeypatch.setitem(sys.modules, "whisperx", fake_mod)
+
+    from backends import whisperx_backend
+    calls = []
+    def cb(stage, pct, msg):
+        calls.append((stage, pct, msg))
+    whisperx_backend.align_audio("/tmp/a.wav", [], "en", "small", progress_callback=cb)
+    percents = [c[1] for c in calls]
+    assert 10 in percents
+    assert 50 in percents
