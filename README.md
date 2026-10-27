@@ -135,9 +135,21 @@ python check_publish.py --artist "Artist" --track "Song" --duration 215
 ## Accuracy benchmark
 
 The defaults above were chosen by scoring generated LRC timestamps against
-[LRCLIB](https://lrclib.net) synced lyrics for 5 Japanese tracks (207 lyric
-lines) drawn from a Spotify playlist, spanning orchestral pop, avant-garde art
-pop, josei rock, funk/soul and post-rock.
+[LRCLIB](https://lrclib.net) synced lyrics. The model comparison and matching
+tables use 5 Japanese tracks (207 lyric lines) drawn from a Spotify playlist,
+spanning orchestral pop, avant-garde art pop, josei rock, funk/soul and
+post-rock. The same configuration was then validated on a wider 19-track
+corpus (813 lines, one track per artist) to check for overfitting:
+
+| slice | lines | ORIGINAL | TUNED | delta |
+|---|---|---|---|---|
+| core 5 | 207 | 81.2% | 87.4% | +6.3 |
+| validation 14 | 606 | 72.4% | 81.2% | +8.8 |
+| **all 19** | **813** | **74.7%** | **82.8%** | **+8.1** |
+
+The tuned matcher improves every slice, and the gain is *larger* on the
+held-out 14 tracks than on the 5 used for tuning (+8.8 vs +6.3), so the
+change generalizes rather than fitting this sample.
 
 **Method.** Audio is the official YouTube video; input lyrics are LRCLIB's own
 `plainLyrics`. One constant offset per track is fitted (maximising inliers, not
