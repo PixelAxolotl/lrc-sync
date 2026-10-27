@@ -151,6 +151,15 @@ The tuned matcher improves every slice, and the gain is *larger* on the
 held-out 14 tracks than on the 5 used for tuning (+8.8 vs +6.3), so the
 change generalizes rather than fitting this sample.
 
+A further run on an expanded 29-track corpus (1384 lines) mixing Japanese
+with English/K-pop tracks showed how much the benchmark depends on the
+language the model was tuned for: `small` scored 61.2% (tuned) overall, with
+the English/K-pop tracks (Taylor Swift, Coldplay, BLACKPINK, …) collapsing
+to 4–20% because the Whisper transcripts and the LRCLIB references diverge
+on those recordings. The 5-track / 19-track Japanese numbers above remain
+the representative ones; non-Japanese audio is not yet a supported
+benchmark target.
+
 **Method.** Audio is the official YouTube video; input lyrics are LRCLIB's own
 `plainLyrics`. One constant offset per track is fitted (maximising inliers, not
 mean delta) and subtracted before scoring, so the numbers measure alignment
