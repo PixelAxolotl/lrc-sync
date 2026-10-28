@@ -88,38 +88,12 @@ avoids the old compounding "previous line + 1s" ramp. Pass `--similarity sets
 
 ### Alignment methods
 
-Benchmarked on the same 5 Japanese tracks (207 lines) used for the model
-comparison above, with the `medium` model and the legacy matcher defaults
-(`accept_threshold=0.2`, `window_pad=8`). The current 0.4/12 defaults are
-benchmarked on the expanded corpus below.
-
-| method | lines within 1s | within 2s | median error |
-|---|---|---|---|
-| `whisper` (default) | 87.4% | 92.3% | 0.39s |
-| `stable-ts` | 90.3% | 95.7% | 0.33s |
-| `whisperx` | 34.8% | 45.4% | 2.88s |
-
-`stable-ts` edges out the default on this sample (and on every track), while
-`whisperx` is far behind here — its pyannote VAD treats sung vocals as
-non-speech on several tracks, leaving too few words to align. WhisperX may
-still help on speech-like or well-separated vocal tracks.
-
-The same comparison across all six model sizes (Japanese, 5 tracks, legacy
-matcher defaults):
-
-| model | whisper | stable-ts |
-|---|---|---|
-| `tiny` | 63.8% | 70.1% |
-| `base` | 74.9% | 75.9% |
-| `small` | 83.6% | 84.5% |
-| **`medium`** (default) | **87.4%** | **90.3%** |
-| `large-v3-turbo` | 79.7% | 82.1% |
-| `large-v3` | 79.2% | 88.4% |
-
-`stable-ts` improves every model size; `large-v3` under stable-ts (88.4%)
-nearly matches `medium` stable-ts (90.3%) while `medium` stays ~4× faster.
-`whisperx` was only benchmarked on `medium` (34.8%) and is not recommended
-on this corpus.
+`whisper` is the default. `stable-ts` and `whisperx` are optional backends.
+The expanded 30-track ja/en benchmark below compares `whisper` and `stable-ts`
+at `medium`; `stable-ts` wins on the held-out batch (64.9% vs 60.9% within 1s)
+and is clearly better on English. `whisperx` is not recommended on this corpus:
+its pyannote VAD treats sung vocals as non-speech on many tracks, leaving too
+few words to align.
 
 - `whisper` (default): faster-whisper transcription + the fuzzy matcher above.
   Works offline from the local model cache.
@@ -153,69 +127,20 @@ python check_publish.py --artist "Artist" --track "Song" --duration 215
 
 ## Accuracy benchmark
 
-The current defaults were retuned in October 2026 on a 30-track ja/en corpus;
-see **Expanded ja/en tuning** below. The tables in this historical section use
-the previous defaults (`accept_threshold=0.2`, `window_pad=8`), chosen by
-scoring generated LRC timestamps against [LRCLIB](https://lrclib.net) synced
-lyrics. They use 5 Japanese tracks (207 lyric lines) drawn from a Spotify
-playlist, spanning orchestral pop, avant-garde art pop, josei rock, funk/soul
-and post-rock, then validated on a wider 19-track Japanese corpus (813 lines,
-one track per artist) to check for overfitting:
+The defaults were retuned in October 2026 on a 30-track corpus mixing Japanese
+and English: 15 tuning tracks (752 lines) and 15 held-out tracks (726 lines,
+all different songs). Audio is the official YouTube video; input lyrics are
+LRCLIB's own `plainLyrics`; ground truth is LRCLIB `syncedLyrics`. One constant
+offset per track is fitted (maximising inliers, not mean delta) and subtracted
+before scoring, so the numbers measure alignment shape rather than the music
+video's intro length. A line counts as correct when it lands within 1s of the
+reference. Dropped, split or merged lines count as errors.
 
-| slice | lines | ORIGINAL | TUNED | delta |
-|---|---|---|---|---|
-| core 5 | 207 | 81.2% | 87.4% | +6.3 |
-| validation 14 | 606 | 72.4% | 81.2% | +8.8 |
-| **all 19** | **813** | **74.7%** | **82.8%** | **+8.1** |
-
-The tuned matcher improves every slice, and the gain is *larger* on the
-held-out 14 tracks than on the 5 used for tuning (+8.8 vs +6.3), so the
-change generalizes rather than fitting this sample.
-
-A further run on an expanded 29-track corpus (1384 lines) mixing Japanese
-with English/K-pop tracks showed how much the benchmark depends on the
-language the model was tuned for: `small` scored 61.2% (tuned) overall, with
-the English/K-pop tracks (Taylor Swift, Coldplay, BLACKPINK, …) collapsing
-to 4–20% because the Whisper transcripts and the LRCLIB references diverge
-on those recordings. That run predates the October 2026 retune; the current
-30-track ja/en corpus below is the representative one. Non-Japanese audio is
-now benchmarked, but English scores lower than Japanese and a few references
-remain version mismatches.
-
-**Method.** Audio is the official YouTube video; input lyrics are LRCLIB's own
-`plainLyrics`. One constant offset per track is fitted (maximising inliers, not
-mean delta) and subtracted before scoring, so the numbers measure alignment
-shape rather than the music video's intro length. A line counts as correct when
-it lands within 1s of the reference. Lines the aligner drops, splits or merges
-count as errors.
-
-Scores are reproducible with `python temp/bench/readme_bench.py` (see
-`temp/bench/RESULTS.md`); re-running after a code change is a valid regression
-check. Runtimes are from a cold cache — a warm one reports ~1s per model.
-
-See **Alignment methods** (below) for a comparison of the Whisper / WhisperX /
-stable-ts backends on the same tracks.
-
-### Model comparison (5-track Japanese corpus, legacy defaults)
-
-> These numbers use the previous matcher defaults (`accept_threshold=0.2`,
-> `window_pad=8`) and are kept as historical context. The shipped defaults are
-> now `accept_threshold=0.4`, `window_pad=12`, tuned on the expanded ja/en
-> corpus below.
-
-| model | lines within 1s | within 2s | median error | max error | 5-track time |
-|---|---|---|---|---|---|
-| `tiny` | 63.8% | 77.8% | 0.77s | 17.5s | 1m |
-| `base` | 74.9% | 86.5% | 0.62s | 10.5s | 3m |
-| `small` | 83.6% | 91.8% | 0.48s | 20.3s | 5m |
-| **`medium`** (default) | **87.4%** | **92.3%** | 0.39s | 14.8s | ~4m |
-| `large-v3-turbo` | 79.7% | 86.5% | 0.45s | 19.9s | 9m |
-| `large-v3` | 79.2% | 85.5% | **0.31s** | 17.4s | 17m |
-
-`medium` scores highest despite `large-v3` being the larger model, and it is
-~3x faster. `large-v3` does produce the smallest median error, so it is the
-choice if you care about typical rather than worst-case accuracy — but on this
-sample it loses more on hard tracks than it gains.
+The selected global matcher config is `similarity_mode=bigram`,
+`interpolate_fallback=True`, `accept_threshold=0.4`, `window_pad=12`.
+Stable-ts medium scores 73.1% on the tuning batch and 64.9% on the held-out
+batch; whisper medium scores 70.2% and 60.9%. Full per-track results:
+[docs/benchmark-v2.md](docs/benchmark-v2.md).
 
 ### Matching parameters (`medium`, expanded 30-track corpus)
 
@@ -233,11 +158,13 @@ ja/en batch (726 lines). With stable-ts medium the selected config scored
 
 Character-bigram F1 still dominates everything else combined. On the mixed
 corpus a higher threshold helps: low-confidence English matches are worse than
-interpolating between neighbours. On the earlier Japanese-only 5-track sample
-0.4 was worse (79.2% vs 87.4%), so the new default trades a little CJK headroom
-for mixed-language robustness.
+interpolating between neighbours, so 0.4 wins by preventing weak matches from
+being accepted.
 
 ### Expanded ja/en tuning (30 tracks)
+
+Tuning batch: 752 lines (10 ja + 5 en). Held-out comparison batch: 726 lines
+(10 ja + 5 en, all different tracks).
 
 | method | tuning ≤1s | held-out ≤1s | held-out ja | held-out en |
 |---|---|---|---|---|
@@ -249,52 +176,26 @@ for mixed-language robustness.
 +7.4 on the held-out batch. The held-out set was not curated after scoring;
 three tracks (FantasticYouth English version, Bruno Mars' *Uptown Funk*, Adele's
 *Rolling in the Deep*) remain reference/version mismatches and pull the English
-average down. See `temp/bench/v2_final_report.md` for per-track results.
-
-### Old matcher vs tuned matcher, per model (5-track Japanese corpus, legacy defaults)
-
-| model | original | current | delta |
-|---|---|---|---|
-| `tiny` | 48.8% | 63.8% | **+15.0** |
-| `base` | 64.3% | 74.9% | +10.6 |
-| `small` | 77.3% | 83.6% | +6.3 |
-| `medium` | 80.2% | 87.4% | +7.3 |
-| `large-v3-turbo` | 76.3% | 79.7% | +3.4 |
-| `large-v3` | 75.4% | 79.2% | +3.9 |
-
-The matching improvements help every model, and help most where the model is
-weakest — they raise the floor rather than substitute for a bigger model.
+average down. Full per-track breakdown: [docs/benchmark-v2.md](docs/benchmark-v2.md).
 
 ### Caveats
 
-- **5 tracks / 207 lines is a small sample**, and they are not independent
-  (four are 2025–26 anime tie-ins). A wider 19-track run put the tuning gain at
-  +8.0 points overall, and *larger* on the 14 tracks never used for tuning
-  (+8.6 vs +6.3 on these five) — so the change generalizes rather than fitting
-  this sample.
 - **LRCLIB is machine-generated, not human-verified.** Scoring against it partly
-  means reproducing another model's errors. On an earlier attribution pass,
-  ~5% of lines sat where our transcript said while LRCLIB said otherwise —
-  a reference-side error no aligner can fix.
+  means reproducing another model's errors. Some lines sit where our transcript
+  says while LRCLIB says otherwise — a reference-side error no aligner can fix.
 - **Music-video audio vs the studio master.** Offset removal absorbs a constant
-  shift but not a different edit. Every track here is duration-matched, so this
-  is controlled rather than proven; expect problems on short versions, live
-  recordings, or creditless openings.
-- **Japanese only.** All measurements are CJK. The bigram score changes
-  non-CJK behaviour and was not tested on English.
+  shift but not a different edit. Expect problems on short versions, live
+  recordings, or creditless openings; a few English tracks in this corpus are
+  known version mismatches.
+- **English is harder than Japanese.** Held-out accuracy is 57.4% for English
+  vs 69.9% for Japanese with stable-ts medium. English transcripts and LRCLIB
+  references diverge more, especially on live/lyric-video uploads.
 - Roughly 24% of lines in a wider run had their text absent from the Whisper
   transcript entirely, which no matching change can recover.
-- A previously shipped end-to-end test compared output against a hand-maintained
-  golden LRC. It was deleted: it needed the network plus a multi-minute Whisper
-  run per model, and its golden file had drifted — it placed one line inside a
-  neighbour's time slot, which all six models independently disagreed with by
-  ~18s. `test/test_match_invariants.py` now covers the properties that actually
-  matter (line-count parity, monotonicity, order preservation, the ramp
-  regression) without needing a golden file.
-- `--separate-vocals` (Demucs) is **not** recommended as a default: measured
-  across these 5 tracks it netted −2.9 points, helping one track (+9.3) and
-  hurting four (−1.7 to −12.0) by deleting words it mistook for instruments,
-  at ~200s of CPU per track.
+- `test/test_match_invariants.py` covers line-count parity, monotonicity, order
+  preservation and the ramp regression without needing a golden LRC file.
+- `--separate-vocals` (Demucs) is **not** recommended as a default: it can
+  delete words it mistakes for instruments, at ~200s of CPU per track.
 
 ## How it works
 
