@@ -279,8 +279,8 @@
                         </select>
                     </div>
                     <div class="field">
-                        <label for="acceptThreshold">Match threshold <span class="hint" id="acceptThresholdVal">0.20</span> <span class="tip" data-tip="Minimum match score to accept a line. Lines below this are placed by interpolating between their matched neighbours. Lower accepts more lines but risks wrong placements.">ⓘ</span></label>
-                        <input type="range" id="acceptThreshold" min="0.05" max="0.60" step="0.05" value="0.20" oninput="document.getElementById('acceptThresholdVal').textContent=Number(this.value).toFixed(2)">
+                        <label for="acceptThreshold">Match threshold <span class="hint" id="acceptThresholdVal">0.40</span> <span class="tip" data-tip="Minimum match score to accept a line. Lines below this are placed by interpolating between their matched neighbours. Lower accepts more lines but risks wrong placements.">ⓘ</span></label>
+                        <input type="range" id="acceptThreshold" min="0.05" max="0.60" step="0.05" value="0.40" oninput="document.getElementById('acceptThresholdVal').textContent=Number(this.value).toFixed(2)">
                     </div>
                     <div class="tip-wrap">
                         <label for="separateVocals">Separate vocals <span class="tip" data-tip="Strip instrumentals with Demucs before transcribing. Cleaner vocals, more accurate lyric timing; slower, requires demucs.">ⓘ</span></label>

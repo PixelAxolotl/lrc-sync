@@ -354,7 +354,11 @@ async function align() {
     const simEl = document.getElementById("similarity");
     if (simEl && simEl.value) formData.append("similarity", simEl.value);
     const thrEl = document.getElementById("acceptThreshold");
-    if (thrEl && thrEl.value) formData.append("accept_threshold", thrEl.value);
+    const DEFAULT_ACCEPT_THRESHOLD = 0.4;
+    if (thrEl && thrEl.value &&
+        Math.abs(parseFloat(thrEl.value) - DEFAULT_ACCEPT_THRESHOLD) > 1e-9) {
+        formData.append("accept_threshold", thrEl.value);
+    }
 
     try {
         // Start job

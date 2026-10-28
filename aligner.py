@@ -570,11 +570,11 @@ def match_lyrics_to_words(
     lyrics: list[str],
     words: list[WordTimestamp],
     return_spans: bool = False,
-    accept_threshold: float = 0.2,
+    accept_threshold: float = 0.4,
     similarity_mode: str = "bigram",
     conf_floor: float = 0.15,
     est_cjk_divisor: int = 2,
-    window_pad: int = 8,
+    window_pad: int = 12,
     lookahead_mult: int = 3,
     lookahead_extra: int = 10,
     backtrack: int = 5,
@@ -589,9 +589,12 @@ def match_lyrics_to_words(
     Returns line-level timestamps and any warnings. With return_spans=True,
     also returns a per-line span (start_idx, end_idx) into `words` or None.
 
-    Defaults are the tuned values (validated at 82.7% of lines within 1s on a
-    19-track Japanese corpus scored against LRCLIB); pass similarity_mode="sets"
-    plus interpolate_fallback=False to restore the previous behaviour.
+    Defaults are the tuned values. They were selected on a 15-track ja/en
+    tuning batch (73.1% of lines within 1s) and scored 64.9% on a held-out
+    15-track ja/en comparison batch against LRCLIB. The earlier Japanese-only
+    19-track corpus scored 82.7% with the previous defaults. Pass
+    similarity_mode="sets" plus interpolate_fallback=False to restore the
+    previous matcher behaviour.
 
     similarity_mode
         "sets"  legacy bag-of-characters / bag-of-words overlap. Order
@@ -1018,7 +1021,7 @@ def align(
     fallback_temperatures: tuple = (0.2, 0.4),
     drop_looped: bool = True,
     similarity_mode: str = "bigram",
-    accept_threshold: float = 0.2,
+    accept_threshold: float = 0.4,
     method: str = "whisper",
 ) -> AlignmentResult:
     """

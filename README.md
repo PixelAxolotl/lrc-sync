@@ -75,7 +75,7 @@ Options:
 - `--beam-size`: Whisper beam size. Default: `5`
 - `--similarity`: line matching score, `bigram` (default) | `sets` | `both`
 - `--method`: alignment backend, `whisper` (default) | `whisperx` | `stable-ts`
-- `--accept-threshold`: minimum score to accept a line. Default: `0.2`
+- `--accept-threshold`: minimum score to accept a line. Default: `0.4`
 - `--no-interpolate`: place unmatched lines at previous+1s instead of
   interpolating between matched neighbours
 
@@ -89,7 +89,9 @@ avoids the old compounding "previous line + 1s" ramp. Pass `--similarity sets
 ### Alignment methods
 
 Benchmarked on the same 5 Japanese tracks (207 lines) used for the model
-comparison above, with the `medium` model and shipped matcher defaults:
+comparison above, with the `medium` model and the legacy matcher defaults
+(`accept_threshold=0.2`, `window_pad=8`). The current 0.4/12 defaults are
+benchmarked on the expanded corpus below.
 
 | method | lines within 1s | within 2s | median error |
 |---|---|---|---|
@@ -102,7 +104,7 @@ comparison above, with the `medium` model and shipped matcher defaults:
 non-speech on several tracks, leaving too few words to align. WhisperX may
 still help on speech-like or well-separated vocal tracks.
 
-The same comparison across all six model sizes (Japanese, 5 tracks, shipped
+The same comparison across all six model sizes (Japanese, 5 tracks, legacy
 matcher defaults):
 
 | model | whisper | stable-ts |
@@ -151,12 +153,14 @@ python check_publish.py --artist "Artist" --track "Song" --duration 215
 
 ## Accuracy benchmark
 
-The defaults above were chosen by scoring generated LRC timestamps against
-[LRCLIB](https://lrclib.net) synced lyrics. The model comparison and matching
-tables use 5 Japanese tracks (207 lyric lines) drawn from a Spotify playlist,
-spanning orchestral pop, avant-garde art pop, josei rock, funk/soul and
-post-rock. The same configuration was then validated on a wider 19-track
-corpus (813 lines, one track per artist) to check for overfitting:
+The current defaults were retuned in October 2026 on a 30-track ja/en corpus;
+see **Expanded ja/en tuning** below. The tables in this historical section use
+the previous defaults (`accept_threshold=0.2`, `window_pad=8`), chosen by
+scoring generated LRC timestamps against [LRCLIB](https://lrclib.net) synced
+lyrics. They use 5 Japanese tracks (207 lyric lines) drawn from a Spotify
+playlist, spanning orchestral pop, avant-garde art pop, josei rock, funk/soul
+and post-rock, then validated on a wider 19-track Japanese corpus (813 lines,
+one track per artist) to check for overfitting:
 
 | slice | lines | ORIGINAL | TUNED | delta |
 |---|---|---|---|---|
@@ -173,9 +177,10 @@ with English/K-pop tracks showed how much the benchmark depends on the
 language the model was tuned for: `small` scored 61.2% (tuned) overall, with
 the English/K-pop tracks (Taylor Swift, Coldplay, BLACKPINK, …) collapsing
 to 4–20% because the Whisper transcripts and the LRCLIB references diverge
-on those recordings. The 5-track / 19-track Japanese numbers above remain
-the representative ones; non-Japanese audio is not yet a supported
-benchmark target.
+on those recordings. That run predates the October 2026 retune; the current
+30-track ja/en corpus below is the representative one. Non-Japanese audio is
+now benchmarked, but English scores lower than Japanese and a few references
+remain version mismatches.
 
 **Method.** Audio is the official YouTube video; input lyrics are LRCLIB's own
 `plainLyrics`. One constant offset per track is fitted (maximising inliers, not
@@ -191,7 +196,12 @@ check. Runtimes are from a cold cache — a warm one reports ~1s per model.
 See **Alignment methods** (below) for a comparison of the Whisper / WhisperX /
 stable-ts backends on the same tracks.
 
-### Model comparison (shipped defaults)
+### Model comparison (5-track Japanese corpus, legacy defaults)
+
+> These numbers use the previous matcher defaults (`accept_threshold=0.2`,
+> `window_pad=8`) and are kept as historical context. The shipped defaults are
+> now `accept_threshold=0.4`, `window_pad=12`, tuned on the expanded ja/en
+> corpus below.
 
 | model | lines within 1s | within 2s | median error | max error | 5-track time |
 |---|---|---|---|---|---|
@@ -207,22 +217,41 @@ stable-ts backends on the same tracks.
 choice if you care about typical rather than worst-case accuracy — but on this
 sample it loses more on hard tracks than it gains.
 
-### Matching parameters (`medium`)
+### Matching parameters (`medium`, expanded 30-track corpus)
+
+Defaults were retuned in October 2026 on a 15-track ja/en tuning batch
+(10 Japanese + 5 English, 752 lines) and validated on a disjoint 15-track
+ja/en batch (726 lines). With stable-ts medium the selected config scored
+**73.1%** on the tuning batch and **64.9%** on the held-out batch.
 
 | parameter | best | worst | spread |
 |---|---|---|---|
-| `similarity_mode` | **`bigram` 87.4%** | `sets` 68.1% | **19.3** |
-| `accept_threshold` | 0.1–0.3 → 87.4% | 0.4 → 79.2% | 8.2 |
-| `window_pad` (internal) | 8 → 87.4% | 5 → 86.0% | 1.5 |
-| `interpolate_fallback` | on → 87.4% | off → 86.5% | 1.0 |
+| `similarity_mode` | **`bigram` 73.1%** | `sets` 56.1% | **17.0** |
+| `accept_threshold` | **0.4 → 73.1%** | 0.1 → 64.9% | 8.3 |
+| `window_pad` (internal) | 12 → 73.1% | 5/8 → 68.6% | 4.5 |
+| `interpolate_fallback` | on → 73.1% | off → 72.7% | 0.4 |
 
-The similarity score dominates everything else combined. Character-bigram F1 is
-worth **19.3 points** over the older bag-of-characters score, because the latter
-is order-blind — a short line of common kana (`ほっといて`) matches almost any
-window. Thresholds below 0.3 are inert because interpolation already places
-anything that misses.
+Character-bigram F1 still dominates everything else combined. On the mixed
+corpus a higher threshold helps: low-confidence English matches are worse than
+interpolating between neighbours. On the earlier Japanese-only 5-track sample
+0.4 was worse (79.2% vs 87.4%), so the new default trades a little CJK headroom
+for mixed-language robustness.
 
-### Old matcher vs current, per model
+### Expanded ja/en tuning (30 tracks)
+
+| method | tuning ≤1s | held-out ≤1s | held-out ja | held-out en |
+|---|---|---|---|---|
+| **`stable-ts`** | **73.14%** | **64.88%** | **69.89%** | **57.39%** |
+| `whisper` | 70.21% | 60.88% | 68.97% | 48.80% |
+
+`stable-ts` wins on the held-out batch and is clearly better on English
+(+8.6 points). The tuning gain generalizes: +9.2 points on the tuning batch,
++7.4 on the held-out batch. The held-out set was not curated after scoring;
+three tracks (FantasticYouth English version, Bruno Mars' *Uptown Funk*, Adele's
+*Rolling in the Deep*) remain reference/version mismatches and pull the English
+average down. See `temp/bench/v2_final_report.md` for per-track results.
+
+### Old matcher vs tuned matcher, per model (5-track Japanese corpus, legacy defaults)
 
 | model | original | current | delta |
 |---|---|---|---|

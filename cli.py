@@ -77,8 +77,8 @@ def main():
              "order-insensitive bag-of-characters score; 'bigram' is "
              "order-sensitive and much better on CJK."
     )
-    parser.add_argument("--accept-threshold", type=float, default=0.2,
-                        help="Minimum match score to accept a line (default 0.2). "
+    parser.add_argument("--accept-threshold", type=float, default=0.4,
+                        help="Minimum match score to accept a line (default 0.4). "
                              "Below this the line is placed by interpolation.")
     parser.add_argument("--no-interpolate", action="store_true",
                         help="Disable interpolated placement of unmatched lines "

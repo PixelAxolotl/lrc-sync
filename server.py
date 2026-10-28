@@ -157,7 +157,7 @@ def _run_job(
     best_of: int = 5,
     separate_vocals: bool = False,
     similarity_mode: str = "bigram",
-    accept_threshold: float = 0.2,
+    accept_threshold: float = 0.4,
     source_filename: str = None,
     method: str = "whisper",
 ):
@@ -264,7 +264,7 @@ async def create_job(
     best_of: int = Form(5),
     separate_vocals: bool = Form(False),
     similarity: str = Form("bigram"),
-    accept_threshold: float = Form(0.2),
+    accept_threshold: float = Form(0.4),
     method: str = Form("whisper"),
     hf_token: str = Form(None),
 ):
