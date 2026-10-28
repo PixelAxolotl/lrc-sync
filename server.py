@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, File, Form, UploadFile
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 import aligner
@@ -83,18 +83,19 @@ DEBUG = False
 
 # Web UI HF-token prompt coordination
 _ui_token = {"evt": None, "token": "", "model": None}
-_current_job_id = None
+_job_ctx = threading.local()
 
 
 def _ui_token_provider(model_name):
-    global _ui_token, _current_job_id
+    global _ui_token
+    current_job_id = getattr(_job_ctx, "current_job_id", None)
     if _ui_token["evt"] is not None:
         _ui_token["evt"].set()
         _ui_token["evt"] = None
     evt = threading.Event()
     _ui_token = {"evt": evt, "token": "", "model": model_name}
     with jobs_lock:
-        job = jobs.get(_current_job_id)
+        job = jobs.get(current_job_id)
         if job is not None:
             job["need_token"] = model_name
     with _model_dl_lock:
@@ -102,7 +103,7 @@ def _ui_token_provider(model_name):
     _log("INFO", f"Waiting for HF token via web UI (model={model_name})...")
     evt.wait(timeout=900)
     with jobs_lock:
-        job = jobs.get(_current_job_id)
+        job = jobs.get(current_job_id)
         if job is not None:
             job.pop("need_token", None)
     with _model_dl_lock:
@@ -117,6 +118,34 @@ job_cancel: dict = {}
 _job_log: dict = {}
 
 
+def _job_cancelled(job_id: str) -> bool:
+    """True when a cancel was requested for this job (missing job -> False)."""
+    evt = job_cancel.get(job_id)
+    return evt is not None and evt.is_set()
+
+
+def _unknown_job_response():
+    """Shared 404 for job ids that are unknown (or already evicted)."""
+    return JSONResponse(status_code=404, content={"error": "Unknown job"})
+
+
+def _cleanup_job(job_id: str):
+    """Evict a finished job from every in-memory store so they stop growing."""
+    with jobs_lock:
+        jobs.pop(job_id, None)
+        job_words.pop(job_id, None)
+        job_sync.pop(job_id, None)
+        job_cancel.pop(job_id, None)
+        _job_log.pop(job_id, None)
+
+
+def _schedule_job_cleanup(job_id: str, delay_seconds: float = 3600):
+    """Keep a finished job's results briefly, then evict them."""
+    timer = threading.Timer(delay_seconds, _cleanup_job, args=(job_id,))
+    timer.daemon = True
+    timer.start()
+
+
 def _update_job(job_id: str, stage: str, percent: int, message: str):
     with jobs_lock:
         if job_id in jobs:
@@ -127,6 +156,8 @@ def _update_job(job_id: str, stage: str, percent: int, message: str):
             })
     if DEBUG and _job_log.get(job_id) != (stage, percent // 10):
         _job_log[job_id] = (stage, percent // 10)
+        if len(_job_log) > 1000:
+            _job_log.pop(next(iter(_job_log)))
         _log("INFO", f"/api/jobs {job_id} {stage} {percent}% {message}")
 
 
@@ -162,26 +193,24 @@ def _run_job(
     method: str = "stable-ts",
 ):
     """Background worker: download (if URL) + align, storing progress."""
-    global _current_job_id
-    _current_job_id = job_id
+    _job_ctx.current_job_id = job_id
 
     def cb(stage, percent, message):
-        if job_cancel.get(job_id) and job_cancel[job_id].is_set():
+        if _job_cancelled(job_id):
             raise RuntimeError("Cancelled")
         if stage == "detecting_language" and "Detected" in message:
-            try:
-                lang = message.rsplit(":", 1)[1].split("(")[0].strip()
+            parts = message.rsplit(":", 1)
+            if len(parts) == 2:
+                lang = parts[1].split("(")[0].strip()
                 if lang:
                     with jobs_lock:
                         if job_id in jobs:
                             jobs[job_id]["detected_language"] = lang
-            except IndexError:
-                pass
         _update_job(job_id, stage, percent, message)
 
     title = None
     try:
-        if job_cancel.get(job_id) and job_cancel[job_id].is_set():
+        if _job_cancelled(job_id):
             raise RuntimeError("Cancelled")
         path = audio_path
         if url:
@@ -229,8 +258,9 @@ def _run_job(
                     for w in result.words
                 ]
                 job_sync[job_id] = result.sync_text
+        _schedule_job_cleanup(job_id)
     except Exception as e:
-        cancelled = job_cancel.get(job_id) is not None and job_cancel[job_id].is_set()
+        cancelled = _job_cancelled(job_id)
         with jobs_lock:
             if cancelled or str(e) == "Cancelled":
                 jobs[job_id].update({
@@ -246,6 +276,7 @@ def _run_job(
                     "stage": "error",
                     "message": f"Error: {e}",
                 })
+        _schedule_job_cleanup(job_id)
     finally:
         for p in (cleanup_paths or []):
             Path(p).unlink(missing_ok=True)
@@ -289,7 +320,6 @@ async def create_job(
         }
         job_cancel[job_id] = threading.Event()
 
-    import aligner
     aligner.TOKEN_PROVIDER = _ui_token_provider
 
     cleanup_paths = []
@@ -336,8 +366,7 @@ async def get_job(job_id: str):
     with jobs_lock:
         job = jobs.get(job_id)
         if job is None:
-            from fastapi.responses import JSONResponse
-            return JSONResponse(status_code=404, content={"error": "Unknown job"})
+            return _unknown_job_response()
         return dict(job, character_level=CHARACTER_LEVEL)
 
 
@@ -357,8 +386,7 @@ async def cancel_job(job_id: str):
     with jobs_lock:
         job = jobs.get(job_id)
         if job is None:
-            from fastapi.responses import JSONResponse
-            return JSONResponse(status_code=404, content={"error": "Unknown job"})
+            return _unknown_job_response()
         if job.get("done"):
             return {"status": "already_done"}
         if job_id in job_cancel:
@@ -374,7 +402,7 @@ async def get_job_sync(job_id: str):
     with jobs_lock:
         job = jobs.get(job_id)
         if job is None:
-            return JSONResponse(status_code=404, content={"error": "Unknown job"})
+            return _unknown_job_response()
         if job.get("error"):
             return JSONResponse(status_code=409, content={"error": f"Job failed: {job['error']}"})
         if not job.get("done"):
@@ -393,8 +421,7 @@ async def get_job_words(job_id: str):
     with jobs_lock:
         job = jobs.get(job_id)
         if job is None:
-            from fastapi.responses import JSONResponse
-            return JSONResponse(status_code=404, content={"error": "Unknown job"})
+            return _unknown_job_response()
         if job.get("error"):
             from fastapi.responses import JSONResponse
             return JSONResponse(status_code=409, content={"error": f"Job failed: {job['error']}"})
@@ -451,8 +478,6 @@ async def youtube_endpoint(
     method: str = Form("stable-ts"),
 ):
     """Download from YouTube, then align with lyrics. Returns LRC text."""
-    import tempfile
-
     # Download audio to temp file
     audio_path = download_audio(url, output_dir=tempfile.gettempdir())
 
@@ -658,8 +683,9 @@ def main():
         help="Don't auto-open the web UI in a browser",
     )
     parser.add_argument(
-        "--characterlevel", action="store_true",
-        help="Enable word/character-level JSON endpoints and UI buttons",
+        "--characterlevel", dest="characterlevel",
+        action=argparse.BooleanOptionalAction, default=True,
+        help="Enable word/character-level JSON endpoints (default: enabled; --no-characterlevel to disable)",
     )
     parser.add_argument(
         "--debug", action="store_true",

@@ -12,15 +12,21 @@ import sys
 import tempfile
 from pathlib import Path
 
-from aligner import align, _build_initial_prompt
+from aligner import align, _build_initial_prompt, words_to_json
 from logger import log
 from downloader import download_audio
+
+
+def _save_text(path, text, label):
+    Path(path).write_text(text, encoding="utf-8")
+    log("INFO", f"{label} written to {path}", file=sys.stderr)
 
 
 def main():
     parser = argparse.ArgumentParser(
         description="Sync lyrics with audio to create LRC files."
     )
+    add = parser.add_argument
     input_group = parser.add_mutually_exclusive_group(required=True)
     input_group.add_argument(
         "--audio", "-a", help="Path to audio file (mp3, wav, flac, m4a)"
@@ -28,23 +34,23 @@ def main():
     input_group.add_argument(
         "--youtube", "-y", help="YouTube URL to download audio from"
     )
-    parser.add_argument(
+    add(
         "--lyrics", "-l", required=True, help="Path to lyrics text file"
     )
-    parser.add_argument(
+    add(
         "--output", "-o", help="Output LRC file path (default: stdout)"
     )
-    parser.add_argument(
+    add(
         "--output-words", help="Output word-level timestamps JSON file path"
     )
-    parser.add_argument(
-        "--output-sync", help="Output word-level sync JSON file path (default: output_sync.json next to --output)"
+    add(
+        "--output-sync", help="Output character-level sync JSON file path (default: output_sync.json next to --output)"
     )
-    parser.add_argument(
+    add(
         "--characterlevel", action="store_true",
         help="Enable word/character-level JSON outputs (words.json, output_sync.json)"
     )
-    parser.add_argument(
+    add(
         "--model", "-m", default="medium",
         choices=["tiny", "base", "small", "medium", "large-v3", "large-v3-turbo",
                  "tiny.en", "base.en", "small.en", "medium.en"],
@@ -52,49 +58,49 @@ def main():
              "other languages). Larger is slower but more accurate, especially "
              "on CJK."
     )
-    parser.add_argument(
+    add(
         "--language", help="Language code (e.g., 'en', 'zh'). Auto-detect if omitted."
     )
-    parser.add_argument(
+    add(
         "--offset", type=float, default=0.0,
         help="Time offset in seconds (positive = lyrics appear later)"
     )
-    parser.add_argument("--temperature", type=float, default=0.0,
+    add("--temperature", type=float, default=0.0,
                         help="Whisper sampling temperature (default 0.0)")
-    parser.add_argument("--separate-vocals", action="store_true",
+    add("--separate-vocals", action="store_true",
                         help="Separate vocals with Demucs before transcribing (requires demucs)")
-    parser.add_argument("--initial-prompt", action="store_true",
+    add("--initial-prompt", action="store_true",
                         help="Bias Whisper with the lyrics as decoder prompt (off by default; hurts small models)")
-    parser.add_argument("--beam-size", type=int, default=5,
+    add("--beam-size", type=int, default=5,
                         help="Whisper beam size (default 5; higher is slower "
                              "and measured no better on Japanese)")
-    parser.add_argument("--best-of", type=int, default=5,
+    add("--best-of", type=int, default=5,
                         help="Whisper best_of (default 5)")
-    parser.add_argument(
+    add(
         "--similarity", default="bigram",
         choices=["bigram", "sets", "both"],
         help="Line/word matching score (default: bigram). 'sets' is the older "
              "order-insensitive bag-of-characters score; 'bigram' is "
              "order-sensitive and much better on CJK."
     )
-    parser.add_argument("--accept-threshold", type=float, default=0.4,
+    add("--accept-threshold", type=float, default=0.4,
                         help="Minimum match score to accept a line (default 0.4). "
                              "Below this the line is placed by interpolation.")
-    parser.add_argument("--no-interpolate", action="store_true",
+    add("--no-interpolate", action="store_true",
                         help="Disable interpolated placement of unmatched lines "
                              "(they fall back to previous-line + 1s)")
-    parser.add_argument(
+    add(
         "--publish", action="store_true",
         help="Publish the resulting LRC to LRCLIB (requires --track, --artist, --duration)"
     )
-    parser.add_argument("--track", help="Track name for LRCLIB publish")
-    parser.add_argument("--artist", help="Artist name for LRCLIB publish")
-    parser.add_argument(
+    add("--track", help="Track name for LRCLIB publish")
+    add("--artist", help="Artist name for LRCLIB publish")
+    add(
         "--duration", type=float,
         help="Track duration in seconds for LRCLIB publish"
     )
-    parser.add_argument("--album", help="Album name for LRCLIB publish (optional)")
-    parser.add_argument(
+    add("--album", help="Album name for LRCLIB publish (optional)")
+    add(
         "--method", default="stable-ts",
         choices=["stable-ts", "whisper"],
         help="Alignment backend (default: stable-ts).",
@@ -127,7 +133,7 @@ def main():
         # Run alignment
         log("INFO", f"Aligning audio with {args.lyrics}...", file=sys.stderr)
 
-        def _progress(stage, percent, message):
+        def _progress(stage, _percent, message):
             log("INFO", f"[{stage}] {message}", file=sys.stderr)
 
         result = align(
@@ -154,27 +160,21 @@ def main():
 
         # Output
         if args.output:
-            Path(args.output).write_text(result.lrc_text, encoding="utf-8")
-            log("INFO", f"LRC written to {args.output}", file=sys.stderr)
+            _save_text(args.output, result.lrc_text, "LRC")
         else:
             print(result.lrc_text)
 
-        # Always emit a word-level sync JSON alongside the LRC
-        from aligner import words_to_json
+        if args.output_words:
+            _save_text(args.output_words, words_to_json(result.words), "Words JSON")
+
         if args.output_sync:
             sync_out_path = Path(args.output_sync)
         elif args.output:
             sync_out_path = Path(args.output).with_name("output_sync.json")
         else:
             sync_out_path = Path("output_sync.json")
-        sync_out_path.write_text(
-            words_to_json(result.words), encoding="utf-8")
-        log("INFO", f"Word sync JSON written to {sync_out_path}", file=sys.stderr)
-
-        if args.output_words:
-            Path(args.output_words).write_text(
-                words_to_json(result.words), encoding="utf-8")
-            log("INFO", f"Words JSON written to {args.output_words}", file=sys.stderr)
+        if result.sync_text:
+            _save_text(sync_out_path, result.sync_text, "Character sync JSON")
 
         # Publish to LRCLIB
         if args.publish:

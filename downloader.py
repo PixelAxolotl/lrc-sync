@@ -42,6 +42,8 @@ _NOISE_WORDS = (
 
 # Separators that introduce a trailing tail, e.g. `Song - Official Music Video`.
 _NOISE_TAIL_SEP_RE = re.compile(r"\s+[-–—|]\s+")
+_WHITESPACE_RE = re.compile(r"\s+")
+_TRAILING_SEP_RE = re.compile(r"\s+[-–—|]+$")
 
 
 def _is_noise_phrase(text: str) -> bool:
@@ -79,25 +81,20 @@ def sanitize_title(title: Optional[str], max_len: int = 60) -> str:
     # pass the same _is_noise_phrase test as a bracket: `Artist - Song Title
     # (Official Video)` keeps its song name, because the bracket above already
     # removed the noise and what remains is the title.
-    last_sep = None
-    for match in _NOISE_TAIL_SEP_RE.finditer(cleaned):
-        last_sep = match
-    if last_sep is not None and _is_noise_phrase(cleaned[last_sep.end():]):
-        cleaned = cleaned[:last_sep.start()]
+    seps = list(_NOISE_TAIL_SEP_RE.finditer(cleaned))
+    if seps and _is_noise_phrase(cleaned[seps[-1].end():]):
+        cleaned = cleaned[:seps[-1].start()]
     cleaned = _CONTROL_CHARS.sub(" ", cleaned)
     cleaned = _ILLEGAL_FILENAME_CHARS.sub(" ", cleaned)
-    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    cleaned = _WHITESPACE_RE.sub(" ", cleaned).strip()
 
     # A trailing separator leaves a stub like "Song -" once the tail is gone.
-    cleaned = re.sub(r"\s+[-–—|]+$", "", cleaned).strip()
+    cleaned = _TRAILING_SEP_RE.sub("", cleaned).strip()
     # A title of only dots or spaces ("...") is not a usable stem.
     cleaned = cleaned.strip(" .")
 
     if len(cleaned) > max_len:
-        truncated = cleaned[:max_len]
-        if " " in truncated:
-            truncated = truncated[: truncated.rfind(" ")]
-        cleaned = truncated.strip()
+        cleaned = cleaned[:max_len].rsplit(" ", 1)[0].strip()
 
     return cleaned or "audio"
 
@@ -107,12 +104,6 @@ class AudioDownload:
     """A downloaded audio file plus the title it came from."""
     path: str
     title: Optional[str] = None
-
-
-def _find_ffmpeg() -> Optional[str]:
-    """Find ffmpeg executable. Returns path or None."""
-    from ffmpeg_setup import find_ffmpeg
-    return find_ffmpeg()
 
 
 def _title_meta_path(cache_path: Path) -> Path:
@@ -168,22 +159,24 @@ def download_audio_with_info(
     outtmpl = str(Path(output_dir) / "%(title)s.%(ext)s")
 
     def _progress_hook(d):
-        if progress_callback:
-            if d["status"] == "downloading":
-                total = d.get("total_bytes") or d.get("total_bytes_estimate", 0)
-                downloaded = d.get("downloaded_bytes", 0)
-                if total > 0:
-                    pct = min(100, int((downloaded / total) * 100))
-                    progress_callback("downloading", pct, f"Downloading... {pct}%")
-            elif d["status"] == "finished":
-                progress_callback("downloading", 100, "Download complete, converting...")
+        if not progress_callback:
+            return
+        if d["status"] == "downloading":
+            total = d.get("total_bytes") or d.get("total_bytes_estimate", 0)
+            downloaded = d.get("downloaded_bytes", 0)
+            if total > 0:
+                pct = min(100, int((downloaded / total) * 100))
+                progress_callback("downloading", pct, f"Downloading... {pct}%")
+        elif d["status"] == "finished":
+            progress_callback("downloading", 100, "Download complete, converting...")
 
     def _pp_hook(d):
-        if progress_callback:
-            if d["status"] == "started":
-                progress_callback("extracting", 0, "Extracting audio...")
-            elif d["status"] == "finished":
-                progress_callback("extracting", 100, "Audio extracted")
+        if not progress_callback:
+            return
+        if d["status"] == "started":
+            progress_callback("extracting", 0, "Extracting audio...")
+        elif d["status"] == "finished":
+            progress_callback("extracting", 100, "Audio extracted")
 
     ydl_opts = {
         "format": "bestaudio/best",
@@ -217,7 +210,8 @@ def download_audio_with_info(
         from ffmpeg_setup import ensure_ffmpeg
         ffmpeg_path = ensure_ffmpeg()
     except RuntimeError:
-        ffmpeg_path = _find_ffmpeg()
+        from ffmpeg_setup import find_ffmpeg
+        ffmpeg_path = find_ffmpeg()
     if ffmpeg_path:
         ydl_opts["ffmpeg_location"] = str(Path(ffmpeg_path).parent)
 

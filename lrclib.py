@@ -24,7 +24,7 @@ def _urlopen_with_retries(req, timeout=30, action="request"):
     import urllib.request
 
     last_err = None
-    for attempt in range(1, _MAX_ATTEMPTS + 1):
+    for attempt in range(_MAX_ATTEMPTS):
         try:
             return urllib.request.urlopen(req, timeout=timeout)
         except urllib.error.HTTPError:
@@ -32,8 +32,8 @@ def _urlopen_with_retries(req, timeout=30, action="request"):
             raise
         except Exception as e:
             last_err = e
-            if attempt < _MAX_ATTEMPTS:
-                time.sleep(_BACKOFF_BASE * (2 ** (attempt - 1)))
+            if attempt < _MAX_ATTEMPTS - 1:
+                time.sleep(_BACKOFF_BASE * (2 ** attempt))
     raise RuntimeError(
         f"LRCLIB {action} failed after {_MAX_ATTEMPTS} attempts: {last_err}"
     )

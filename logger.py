@@ -23,6 +23,12 @@ _COLORS = {"INFO": GREEN, "WARN": YELLOW, "ERROR": RED, "ISSUES": RED, "DEBUG": 
 _LEVEL_MAP = {"WARNING": "WARN", "CRITICAL": "ERROR"}
 
 
+def _level_prefix(levelname: str) -> str:
+    """Render a level as the shared colored ``[LEVEL]`` prefix."""
+    level = _LEVEL_MAP.get(levelname, levelname)
+    return f"{_COLORS.get(level, GREEN)}[{level}]{RESET}"
+
+
 def _enable_windows_ansi():
     if os.name != "nt":
         return
@@ -64,9 +70,7 @@ class ColorFormatter(logging.Formatter):
 
     def format(self, record):
         original_levelname = record.levelname
-        mapped = _LEVEL_MAP.get(original_levelname, original_levelname)
-        color = _COLORS.get(mapped, GREEN)
-        record.levelname = f"{color}{mapped}{RESET}"
+        record.levelname = _level_prefix(original_levelname)
         try:
             return super().format(record)
         finally:
@@ -91,12 +95,10 @@ class UvicornDefaultFormatter(_UvColourized):
 
     def formatMessage(self, record):
         recordcopy = _copy(record)
-        level = _LEVEL_MAP.get(recordcopy.levelname, recordcopy.levelname)
-        color = _COLORS.get(level, GREEN)
         if "color_message" in recordcopy.__dict__:
             recordcopy.msg = recordcopy.__dict__["color_message"]
             recordcopy.__dict__["message"] = recordcopy.getMessage()
-        recordcopy.__dict__["levelprefix"] = f"{color}[{level}]{RESET}"
+        recordcopy.__dict__["levelprefix"] = _level_prefix(recordcopy.levelname)
         return logging.Formatter.formatMessage(self, recordcopy)
 
 
@@ -117,8 +119,6 @@ class UvicornAccessFormatter(_UvAccess):
         ) = recordcopy.args
         status_code = self.get_status_code(int(status_code))
         request_line = f"{method} {full_path} HTTP/{http_version}"
-        level = _LEVEL_MAP.get(recordcopy.levelname, recordcopy.levelname)
-        color = _COLORS.get(level, GREEN)
         recordcopy.__dict__.update(
             {
                 "client_addr": client_addr,
@@ -129,7 +129,7 @@ class UvicornAccessFormatter(_UvAccess):
         if "color_message" in recordcopy.__dict__:
             recordcopy.msg = recordcopy.__dict__["color_message"]
             recordcopy.__dict__["message"] = recordcopy.getMessage()
-        recordcopy.__dict__["levelprefix"] = f"{color}[{level}]{RESET}"
+        recordcopy.__dict__["levelprefix"] = _level_prefix(recordcopy.levelname)
         return logging.Formatter.formatMessage(self, recordcopy)
 
 # Filter successful polling of GET /api/jobs/{id} from uvicorn's access log.
@@ -165,13 +165,5 @@ class JobPollFilter(logging.Filter):
                 return False
         return True
 
-
-# Aliases for compatibility with possible naming in callers/tests.
-JobPollAccessFilter = JobPollFilter
-JobPollingFilter = JobPollFilter
-PollingFilter = JobPollFilter
-AccessLogFilter = JobPollFilter
-SuppressJobPollFilter = JobPollFilter
-JobPollSuccessFilter = JobPollFilter
 
 job_poll_filter = JobPollFilter()

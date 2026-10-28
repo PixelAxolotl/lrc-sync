@@ -89,6 +89,18 @@ _NO_SPACE_AFTER = set("\"'“‘([{")
 _NO_SPACE_BEFORE = set(".,!?:;%)]}'\"’”、。〈〉「」『』")
 
 
+def _needs_space(prev: str, nxt: str) -> bool:
+    return (
+        bool(prev)
+        and not prev.isspace()
+        and not nxt.isspace()
+        and not _is_cjk_char(prev)
+        and not _is_cjk_char(nxt)
+        and prev not in _NO_SPACE_AFTER
+        and nxt not in _NO_SPACE_BEFORE
+    )
+
+
 def _join_spans(texts: list[str]) -> str:
     """Join word-span texts, restoring spaces Apple TTML spans omit.
 
@@ -99,18 +111,8 @@ def _join_spans(texts: list[str]) -> str:
     """
     parts: list[str] = []
     for text in texts:
-        if parts and text:
-            prev, nxt = parts[-1][-1:], text[:1]
-            if (
-                prev
-                and not prev.isspace()
-                and not nxt.isspace()
-                and not _is_cjk_char(prev)
-                and not _is_cjk_char(nxt)
-                and prev not in _NO_SPACE_AFTER
-                and nxt not in _NO_SPACE_BEFORE
-            ):
-                parts.append(" ")
+        if parts and text and _needs_space(parts[-1][-1:], text[:1]):
+            parts.append(" ")
         parts.append(text)
     return "".join(parts)
 
@@ -158,9 +160,10 @@ def to_lrc(parsed: dict) -> str:
     """Render parsed lines as LRC text."""
     out = []
     for line in parsed["lines"]:
-        minutes = int(line["start"] // 60)
-        seconds = line["start"] % 60
-        out.append(f"[{minutes:02d}:{seconds:05.2f}]{line['text']}")
+        cs = int(round(max(0.0, line["start"]) * 100))
+        m, rem = divmod(cs, 6000)
+        s = rem / 100.0
+        out.append(f"[{m:02d}:{s:05.2f}]{line['text']}")
     return "\n".join(out)
 
 
@@ -176,6 +179,7 @@ def to_sync_json(parsed: dict, noise: float = 0.02, seed=None) -> str:
     pass ``noise=0.0`` for exact timings (and ``seed=`` for reproducible
     jitter in tests).
     """
+    import itertools
     import random
 
     if parsed["timing"] != "word":
@@ -200,7 +204,7 @@ def to_sync_json(parsed: dict, noise: float = 0.02, seed=None) -> str:
                 if c.isspace():
                     chars.append(chars[-1] if chars else line["start"])
                 else:
-                    chars.append(times[ti] if ti < len(times) else times[-1])
+                    chars.append(times[ti])
                     ti += 1
             # Restored separator spaces carry no timing of their own:
             # interpolate across the gap between the word boundaries.
@@ -211,9 +215,7 @@ def to_sync_json(parsed: dict, noise: float = 0.02, seed=None) -> str:
                     chars.append(midpoint)
         if noise > 0:
             chars = [c + rng.uniform(-noise, noise) for c in chars]
-        monotonic: list[float] = []
-        for c in chars:
-            monotonic.append(c if not monotonic or c >= monotonic[-1] else monotonic[-1])
+        monotonic = list(itertools.accumulate(chars, max))
         out_lines.append({
             "start": pos,
             "end": pos + len(text) - 1,

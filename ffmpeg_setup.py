@@ -20,10 +20,10 @@ def find_ffmpeg() -> Optional[str]:
     if ffmpeg_in_path:
         return ffmpeg_in_path
 
-    for pattern in ["ffmpeg-*/bin/ffmpeg.exe", "ffmpeg-*/bin/ffmpeg"]:
-        matches = list(PROJECT_DIR.glob(pattern))
-        if matches:
-            return str(matches[0])
+    for pattern in ("ffmpeg-*/bin/ffmpeg.exe", "ffmpeg-*/bin/ffmpeg"):
+        match = next(PROJECT_DIR.glob(pattern), None)
+        if match:
+            return str(match)
 
     return None
 
@@ -49,10 +49,10 @@ def _download_ffmpeg() -> str:
         if zip_path.exists():
             zip_path.unlink()
 
-    for pattern in ["ffmpeg-*/bin/ffmpeg.exe", "ffmpeg-*/bin/ffmpeg"]:
-        matches = list(PROJECT_DIR.glob(pattern))
-        if matches:
-            return str(matches[0])
+    for pattern in ("ffmpeg-*/bin/ffmpeg.exe", "ffmpeg-*/bin/ffmpeg"):
+        match = next(PROJECT_DIR.glob(pattern), None)
+        if match:
+            return str(match)
 
     raise RuntimeError("ffmpeg download succeeded but executable not found after extraction.")
 

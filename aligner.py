@@ -78,12 +78,6 @@ def get_backend(method):
     return reg[key]
 
 
-def _find_ffmpeg() -> Optional[str]:
-    """Find ffmpeg executable. Returns path or None."""
-    from ffmpeg_setup import find_ffmpeg
-    return find_ffmpeg()
-
-
 def wav_duration_seconds(wav_path: str) -> Optional[float]:
     """Read a WAV's duration from its header. Returns None if unreadable.
 
@@ -109,10 +103,7 @@ def convert_to_wav(audio_path: str, output_path: Optional[str] = None) -> str:
         output_path = tempfile.mktemp(suffix=".wav")
 
     from ffmpeg_setup import ensure_ffmpeg
-    try:
-        ffmpeg = ensure_ffmpeg()
-    except RuntimeError as e:
-        raise RuntimeError(str(e))
+    ffmpeg = ensure_ffmpeg()
 
     cmd = [
         ffmpeg, "-y", "-i", audio_path,
@@ -210,8 +201,6 @@ def detect_language_from_text(text: str) -> Optional[str]:
     if has_thai:
         return "th"
     # Shared scripts: ambiguous, defer to the audio model
-    if has_ar or has_dev or has_cyrillic or has_latin or has_hanzi:
-        return None
     return None
 
 
@@ -240,7 +229,6 @@ def _load_whisper_model(name: str, progress_callback=None):
         _maybe_prompt_for_hf_token(name)
         if progress_callback:
             progress_callback("downloading", 0, f"Downloading '{name}' from Hugging Face...")
-    if download_needed:
         log("INFO", f"Model '{name}' not found locally — downloading from Hugging Face...")
     import threading, time
     stop = threading.Event()
@@ -248,9 +236,26 @@ def _load_whisper_model(name: str, progress_callback=None):
 
     def _report_size():
         nonlocal prev_mb
+        watch = [_LOCAL_MODELS_DIR / name]
+        expected = _expected_cache_dir(name)
+        if expected:
+            watch.append(_LOCAL_MODELS_DIR / expected)
         while not stop.wait(2.0):
             try:
-                mb = sum(f.stat().st_size for f in _LOCAL_MODELS_DIR.rglob("*") if f.is_file()) / 1e6
+                mb = 0.0
+                for root in watch:
+                    if root.is_file():
+                        try:
+                            mb += root.stat().st_size / 1e6
+                        except OSError:
+                            continue
+                    elif root.is_dir():
+                        for f in root.rglob("*"):
+                            if f.is_file():
+                                try:
+                                    mb += f.stat().st_size / 1e6
+                                except OSError:
+                                    continue
                 if mb > prev_mb + 0.5:  # only print when it actually grows
                     delta = mb if prev_mb < 0 else mb - prev_mb
                     log("INFO", f"downloaded {delta:.1f} MB (total in whisper_models: {mb:.1f} MB)...")
@@ -465,7 +470,6 @@ def transcribe_with_whisper(
         words for every lyric line it covered, which no amount of matching can
         recover. Set False to keep everything.
     """
-    from faster_whisper import WhisperModel
 
     if progress_callback:
         progress_callback("loading_model", 0, "Loading Whisper model (downloads on first run)...")
@@ -797,8 +801,6 @@ def _bigram_f1(a: str, b: str) -> float:
     right order, unlike the legacy set-overlap score.
     """
     ga, gb = _char_ngrams(a), _char_ngrams(b)
-    if not ga or not gb:
-        return 0.0
     inter = len(ga & gb)
     if not inter:
         return 0.0
@@ -880,16 +882,10 @@ def sync_json(
     pos = 0
     for idx, line in enumerate(lyric_lines):
         text = line.strip()
-        if idx < len(lines):
-            lt = lines[idx]
-        else:
-            lt = LineTimestamp(line=text, start=0.0)
+        lt = lines[idx] if idx < len(lines) else LineTimestamp(line=text, start=0.0)
 
         span = spans[idx] if idx < len(spans) else None
-        if span is not None:
-            span_words = norm_words[span[0]:span[1] + 1]
-        else:
-            span_words = []
+        span_words = norm_words[span[0]:span[1] + 1] if span is not None else []
 
         char_times = _char_times_for_line(text, lt.start, span_words,
                                           _next_start(lines, idx))
@@ -904,9 +900,8 @@ def sync_json(
 
 
 def _next_start(lines: list[LineTimestamp], idx: int) -> Optional[float]:
-    for j in range(idx + 1, len(lines)):
-        if lines[j].start > 0 or True:
-            return lines[j].start
+    if idx + 1 < len(lines):
+        return lines[idx + 1].start
     return None
 
 
@@ -921,43 +916,37 @@ def _char_times_for_line(
     if not chars:
         return []
 
-    if span_words:
-        # Proportional char budget per word based on its normalized length
-        parts = []
-        counts = [max(1, len(_normalize(w.word))) for w in span_words]
-        total = sum(counts)
-        body = [c for c in chars if not c.isspace()]
-        # assign chars to words proportionally
-        assigned = []
-        start_at = 0
-        for wi, cnt in enumerate(counts):
-            take = round(len(body) * cnt / total)
-            if wi == len(counts) - 1:
-                take = len(body) - start_at
-            assigned.append(body[start_at:start_at + take])
-            start_at += take
-        # build per-word time ranges
-        times = []
-        for wrepo, w in zip(assigned, span_words):
-            n = max(1, len(wrepo))
-            for k in range(len(wrepo)):
-                t = w.start + (w.end - w.start) * (k / n)
-                times.append(round(t, 3))
-        # interleave back over original chars (spaces get previous time)
-        out = []
-        ti = 0
-        for c in chars:
-            if c.isspace():
-                out.append(out[-1] if out else round(line_start, 3))
-            else:
-                out.append(times[ti] if ti < len(times) else round(times[-1], 3))
-                ti += 1
-        return out
+    if not span_words:
+        end = next_start if next_start is not None and next_start > line_start else line_start + 2.0
+        n = len(chars)
+        return [round(line_start + (end - line_start) * (i / n), 3) for i in range(n)]
 
-    # Fallback: even spread over [line_start, next line start or +2s]
-    end = next_start if next_start is not None and next_start > line_start else line_start + 2.0
-    n = len(chars)
-    return [round(line_start + (end - line_start) * (i / n), 3) for i in range(n)]
+    counts = [max(1, len(_normalize(w.word))) for w in span_words]
+    total = sum(counts)
+    body = [c for c in chars if not c.isspace()]
+    assigned = []
+    start_at = 0
+    for wi, cnt in enumerate(counts):
+        take = round(len(body) * cnt / total)
+        if wi == len(counts) - 1:
+            take = len(body) - start_at
+        assigned.append(body[start_at:start_at + take])
+        start_at += take
+    times = []
+    for wrepo, w in zip(assigned, span_words):
+        n = max(1, len(wrepo))
+        for k in range(len(wrepo)):
+            t = w.start + (w.end - w.start) * (k / n)
+            times.append(round(t, 3))
+    out = []
+    ti = 0
+    for c in chars:
+        if c.isspace():
+            out.append(out[-1] if out else round(line_start, 3))
+        else:
+            out.append(times[ti] if ti < len(times) else round(times[-1], 3))
+            ti += 1
+    return out
 
 
 def format_lrc(
@@ -976,13 +965,8 @@ def format_lrc(
     if not lines:
         return ""
 
-    # Apply offset
-    adjusted = []
-    for lt in lines:
-        start = max(0.0, lt.start + offset)
-        adjusted.append(LineTimestamp(line=lt.line, start=start))
+    adjusted = [LineTimestamp(line=lt.line, start=max(0.0, lt.start + offset)) for lt in lines]
 
-    # Merge consecutive lines with same timestamp
     if merge_consecutive:
         merged: list[LineTimestamp] = []
         for lt in adjusted:
@@ -995,12 +979,12 @@ def format_lrc(
                 merged.append(lt)
         adjusted = merged
 
-    # Format as LRC
     lrc_lines = []
     for lt in adjusted:
-        minutes = int(lt.start // 60)
-        seconds = lt.start % 60
-        lrc_lines.append(f"[{minutes:02d}:{seconds:05.2f}]{lt.line}")
+        cs = int(round(lt.start * 100))
+        m, rem = divmod(cs, 6000)
+        s = rem / 100.0
+        lrc_lines.append(f"[{m:02d}:{s:05.2f}]{lt.line}")
 
     return "\n".join(lrc_lines) + "\n"
 
@@ -1152,7 +1136,8 @@ def align(
             )
             for w in words
         ]
-        result.sync_text = sync_json(line_timestamps, lyrics_lines, spans, result.words)
+        offset_lines = [LineTimestamp(line=lt.line, start=max(0.0, lt.start + offset)) for lt in line_timestamps]
+        result.sync_text = sync_json(offset_lines, lyrics_lines, spans, result.words)
 
         # Format as LRC
         result.lrc_text = format_lrc(line_timestamps, offset=offset)

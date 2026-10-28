@@ -487,15 +487,18 @@ function updateSyncButtonLabel(filename) {
     if (btn) btn.textContent = `Download ${filename}`;
 }
 
-function downloadLRC() {
-    if (!lrcResult) return;
-    const blob = new Blob([lrcResult], { type: "text/plain" });
+function saveBlob(blob, filename) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "lyrics.lrc";
+    a.download = filename;
     a.click();
     URL.revokeObjectURL(url);
+}
+
+function downloadLRC() {
+    if (!lrcResult) return;
+    saveBlob(new Blob([lrcResult], { type: "text/plain" }), "lyrics.lrc");
 }
 
 async function downloadWords() {
@@ -506,12 +509,7 @@ async function downloadWords() {
         const response = await fetch(`/api/jobs/${lastJobId}/words`);
         if (!response.ok) throw new Error(`Server error: ${response.status}`);
         const blob = await response.blob();
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = "words.json";
-        a.click();
-        URL.revokeObjectURL(url);
+        saveBlob(blob, "words.json");
     } catch (e) {
         if (status) status.textContent = `Words download failed: ${e.message}`;
     }
@@ -525,12 +523,7 @@ async function downloadSync() {
         const response = await fetch(`/api/jobs/${lastJobId}/sync`);
         if (!response.ok) throw new Error(`Server error: ${response.status}`);
         const blob = await response.blob();
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = lastSyncFilename || "audio_sync.json";
-        a.click();
-        URL.revokeObjectURL(url);
+        saveBlob(blob, lastSyncFilename || "audio_sync.json");
     } catch (e) {
         if (status) status.textContent = `Sync download failed: ${e.message}`;
     }
@@ -538,13 +531,7 @@ async function downloadSync() {
 
 async function downloadPaxSync() {
     if (!paxSyncJson) return;
-    const blob = new Blob([paxSyncJson], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "paxsenix_sync.json";
-    a.click();
-    URL.revokeObjectURL(url);
+    saveBlob(new Blob([paxSyncJson], { type: "application/json" }), "paxsenix_sync.json");
 }
 
 async function fetchPaxsenix() {
