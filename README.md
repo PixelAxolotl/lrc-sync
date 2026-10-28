@@ -30,6 +30,22 @@ pip install -r requirements.txt
 
 ## Usage
 
+### Desktop window
+
+Install the dependencies, then run:
+
+```bash
+python desktop.py
+```
+
+This opens the existing interface in one native application window instead of
+an external browser. On Windows, `run_desktop.bat` is a convenient launcher.
+
+To build a standalone Windows application folder, install PyInstaller and run
+`build_desktop.bat`. The resulting executable is
+`dist\LrcSync\LrcSync.exe`. Whisper models are downloaded on first use and are
+not bundled into the executable because they are large.
+
 ### Web UI
 
 ```bash

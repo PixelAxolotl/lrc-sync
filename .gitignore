@@ -35,5 +35,8 @@ pytest.ini
 
 # Build artifacts
 *.egg-info/
+build/
+dist/
+*.spec
 # Runtime logs
 temp_server.log
