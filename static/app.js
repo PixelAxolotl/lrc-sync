@@ -2,6 +2,7 @@ let lrcResult = "";
 let lastJobId = "";
 let lastSyncFilename = "";
 let paxSyncJson = "";
+let lastLrclibSearchResults = [];
 
 let displayedPercent = 0;
 let targetPercent = 0;
@@ -302,7 +303,7 @@ async function align() {
     const youtubeUrl = document.getElementById("youtubeUrl").value.trim();
     const lyrics = document.getElementById("lyrics").value;
     const model = document.getElementById("model").value;
-    const method = document.getElementById("method")?.value || "whisper";
+    const method = document.getElementById("method")?.value || "stable-ts";
     const language = document.getElementById("language").value || null;
     const offset = parseFloat(document.getElementById("offset").value) || 0;
     const temperature = parseFloat(document.getElementById("temperature").value) || 0;
@@ -709,13 +710,15 @@ async function searchLrclib() {
     const durRaw = val("searchDuration", "lrclibDuration");
     const duration = parseFloat(durRaw);
     const hasDuration = durRaw !== "" && isFinite(duration) && duration > 0;
+    // If the song-name field holds a pure number, treat it as an LRCLIB id.
+    const lrclibId = /^\d+$/.test(track) ? track : "";
     const status = document.getElementById("checkStatus");
     const error = document.getElementById("checkError");
     const results = document.getElementById("checkResults");
     const btn = document.getElementById("checkSearchBtn");
 
-    if (!artist || !track) {
-        error.textContent = "Artist and song name are required.";
+    if (!lrclibId && (!artist || !track)) {
+        error.textContent = "Artist and song name are required (or provide an LRCLIB ID).";
         return;
     }
     error.textContent = "";
@@ -723,44 +726,49 @@ async function searchLrclib() {
     status.textContent = "Searching LRCLIB...";
     btn.disabled = true;
     try {
-        const params = new URLSearchParams({ artist_name: artist, track_name: track });
-        const response = await fetch(`/api/search?${params}`);
-        const data = await response.json().catch(() => ([]));
-        if (!response.ok) throw new Error(data.error || `Server error: ${response.status}`);
-        let list = Array.isArray(data) ? data : [];
-        if (hasDuration) {
-            list = list.slice().sort((a, b) =>
-                Math.abs((a.duration || 0) - duration) - Math.abs((b.duration || 0) - duration));
-        }
+        let list = [];
         let publishedId = null;
         let possibleId = null;
-        if (hasDuration) {
-            try {
-                const lookupParams = new URLSearchParams({ artist, track, duration });
-                const lookupResp = await fetch(`/api/lookup?${lookupParams}`);
-                if (lookupResp.ok) {
-                    const lookupData = await lookupResp.json();
-                    publishedId = lookupData.id ?? null;
-                }
-                // 404 just means nothing published for that duration — no highlight.
-            } catch (e) {
-                // lookup failure must not break the search listing
+        if (lrclibId) {
+            const response = await fetch(`/api/lookup?id=${encodeURIComponent(lrclibId)}`);
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(data.error || `Server error: ${response.status}`);
+            list = [data];
+            publishedId = data.id ?? null;
+        } else {
+            const params = new URLSearchParams({ artist_name: artist, track_name: track });
+            const response = await fetch(`/api/search?${params}`);
+            const data = await response.json().catch(() => ([]));
+            if (!response.ok) throw new Error(data.error || `Server error: ${response.status}`);
+            list = Array.isArray(data) ? data : [];
+            if (hasDuration) {
+                list = list.slice().sort((a, b) =>
+                    Math.abs((a.duration || 0) - duration) - Math.abs((b.duration || 0) - duration));
             }
-            if (publishedId === null && list.length) {
-                // Exact lookup missed: closest duration within 2s is only a
-                // possible match — confirm it by id before calling it published.
-                const best = list[0];
-                if (best.duration != null && Math.abs(best.duration - duration) <= 2 && best.id != null) {
-                    try {
-                        const confirmResp = await fetch(`/api/lookup?${new URLSearchParams({ id: best.id })}`);
-                        if (confirmResp.ok) {
-                            const confirmData = await confirmResp.json();
-                            publishedId = confirmData.id ?? null;
-                        } else {
+            if (hasDuration) {
+                try {
+                    const lookupParams = new URLSearchParams({ artist, track, duration });
+                    const lookupResp = await fetch(`/api/lookup?${lookupParams}`);
+                    if (lookupResp.ok) {
+                        const lookupData = await lookupResp.json();
+                        publishedId = lookupData.id ?? null;
+                    }
+                } catch (e) {
+                }
+                if (publishedId === null && list.length) {
+                    const best = list[0];
+                    if (best.duration != null && Math.abs(best.duration - duration) <= 2 && best.id != null) {
+                        try {
+                            const confirmResp = await fetch(`/api/lookup?${new URLSearchParams({ id: best.id })}`);
+                            if (confirmResp.ok) {
+                                const confirmData = await confirmResp.json();
+                                publishedId = confirmData.id ?? null;
+                            } else {
+                                possibleId = best.id;
+                            }
+                        } catch (e) {
                             possibleId = best.id;
                         }
-                    } catch (e) {
-                        possibleId = best.id;
                     }
                 }
             }
@@ -770,21 +778,53 @@ async function searchLrclib() {
             return;
         }
         status.textContent = `${list.length} match${list.length === 1 ? "" : "es"} found.`;
-        results.innerHTML = list.map((r) => {
+        lastLrclibSearchResults = list;
+        results.innerHTML = list.map((r, i) => {
             const synced = !!((r.syncedLyrics || "").trim());
             const isPub = publishedId !== null && r.id === publishedId;
             const isPoss = !isPub && publishedId === null && possibleId !== null && r.id === possibleId;
             const hl = isPub ? " published" : "";
             const dur = r.duration != null ? `${escHtml(Math.round(r.duration))}s` : "—";
-            return `<div class="check-row${hl}"><strong>${escHtml(r.trackName)}` +
+            const lrc = escHtml((r.syncedLyrics || r.plainLyrics || "").trim());
+            return `<div class="check-row${hl}" style="cursor:pointer;" onclick="toggleLrclibDetail(${i})"><strong>${escHtml(r.trackName)}` +
                 `</strong> — ${escHtml(r.artistName)}<br>` +
-                `<span class="hint">${escHtml(r.albumName || "no album")} · ${dur} · ` +
-                `${synced ? "synced" : "plain only"}${isPoss ? " · possible match (unconfirmed)" : ""}</span></div>`;
+                `<span class="hint">ID: ${escHtml(r.id)} · ${escHtml(r.albumName || "no album")} · ${dur} · ` +
+                `${synced ? "synced" : "plain only"}${isPoss ? " · possible match (unconfirmed)" : ""}</span></div>` +
+                `<div class="check-detail" id="checkDetail-${i}" style="display:none; margin:0.5rem 0 1rem 0; padding:0.5rem; border:1px solid var(--field-border, #ccc); border-radius:6px;">` +
+                `<label>Full LRC (LRCLIB id: ${escHtml(r.id)})</label>` +
+                `<textarea readonly style="width:100%; min-height:10rem; margin-top:0.25rem;">${lrc}</textarea>` +
+                `<div style="margin-top:0.5rem;"><button class="download-btn" onclick="event.stopPropagation(); copyLrclibId(${i})">Copy LRCLIB ID</button></div>` +
+                `</div>`;
         }).join("");
     } catch (e) {
         status.textContent = "";
         error.textContent = `Error: ${e.message}`;
     } finally {
         btn.disabled = false;
+    }
+}
+
+function toggleLrclibDetail(i) {
+    const detail = document.getElementById("checkDetail-" + i);
+    if (!detail) return;
+    const willShow = detail.style.display === "none" || detail.style.display === "";
+    document.querySelectorAll(".check-detail").forEach((el) => {
+        if (el !== detail) el.style.display = "none";
+    });
+    detail.style.display = willShow ? "block" : "none";
+}
+
+async function copyLrclibId(i) {
+    const r = lastLrclibSearchResults[i];
+    if (!r || r.id == null) return;
+    try {
+        await navigator.clipboard.writeText(String(r.id));
+    } catch (e) {
+        const ta = document.createElement("textarea");
+        ta.value = String(r.id);
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
     }
 }

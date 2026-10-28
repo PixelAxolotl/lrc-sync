@@ -1,4 +1,5 @@
 faster-whisper>=1.0.0
+stable-ts>=2.0.0
 # PyAV is only faster-whisper's *fallback* decoder: aligner hands Whisper the
 # 16kHz mono array it already has, so the av.open() API changes that broke
 # faster-whisper 1.2.1 can't reach us. Do not pin an old av -- 14.2.0 has no
@@ -11,10 +12,9 @@ yt-dlp>=2024.1.1
 
 # Optional: only needed for --separate-vocals (Demucs vocal separation).
 # Demucs drags in torch (~800MB), and separation is NOT recommended as a
-# default: benchmarked against LRCLIB on 5 Japanese tracks it netted -2.9
-# points (helped 1 track by +9.3, hurt 4 by 1.7-12.0) while costing ~200s of
-# CPU per track, because it drops words it mistakes for instruments.
-# Install it only if you want to try separation on a specific track:
+# default: it can drop words it mistakes for instruments while costing ~200s
+# of CPU per track. Install it only if you want to try separation on a
+# specific track:
 #   pip install "demucs>=4.0.0"
 # See the "Accuracy benchmark" section of README.md for the measurements.
 # demucs>=4.0.0

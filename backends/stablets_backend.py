@@ -2,7 +2,7 @@ def align_audio(audio_path, lines, lang, model_size, progress_callback=None, **k
     try:
         import stable_whisper
     except ImportError as e:
-        raise RuntimeError("stable-ts is not installed. Install with: pip install lrc-sync[stable-ts]") from e
+        raise RuntimeError("stable-ts is not installed. Install with: pip install stable-ts") from e
     from aligner import WordTimestamp
     if progress_callback:
         progress_callback("loading_model", 0, "Loading stable-ts model...")

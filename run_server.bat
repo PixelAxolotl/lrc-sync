@@ -1,5 +1,5 @@
 @echo off
-REM force huggingface.co for whisperx align models (hf-mirror returns 308)
+REM force huggingface.co for model downloads (hf-mirror returns 308)
 set HF_ENDPOINT=https://huggingface.co
 REM Silent launcher for lrc-sync web UI - starts the server minimized
 REM NOTE: uses console python, not pythonw. Detached pythonw has no stdout

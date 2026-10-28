@@ -95,9 +95,9 @@ def main():
     )
     parser.add_argument("--album", help="Album name for LRCLIB publish (optional)")
     parser.add_argument(
-        "--method", default="whisper",
-        choices=["whisper", "whisperx", "stable-ts"],
-        help="Alignment backend (default: whisper).",
+        "--method", default="stable-ts",
+        choices=["stable-ts", "whisper"],
+        help="Alignment backend (default: stable-ts).",
     )
  
     args = parser.parse_args()

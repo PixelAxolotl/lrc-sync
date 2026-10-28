@@ -55,10 +55,9 @@ def _load_backend_registry():
     global _BACKEND_REGISTRY
     if _BACKEND_REGISTRY is not None:
         return _BACKEND_REGISTRY
-    from backends import whisper_backend, whisperx_backend, stablets_backend
+    from backends import whisper_backend, stablets_backend
     _BACKEND_REGISTRY = {
         "whisper": whisper_backend.align_audio,
-        "whisperx": whisperx_backend.align_audio,
         "stable-ts": stablets_backend.align_audio,
     }
     return _BACKEND_REGISTRY
@@ -70,7 +69,7 @@ def _backend_registry():
 
 def get_backend(method):
     reg = _backend_registry()
-    key = (method or "whisper").strip().lower()
+    key = (method or "stable-ts").strip().lower()
     if key not in reg:
         raise ValueError(
             f"Unknown alignment method '{method}'. "
@@ -1022,7 +1021,7 @@ def align(
     drop_looped: bool = True,
     similarity_mode: str = "bigram",
     accept_threshold: float = 0.4,
-    method: str = "whisper",
+    method: str = "stable-ts",
 ) -> AlignmentResult:
     """
     Full alignment pipeline: audio + lyrics → LRC.

@@ -159,7 +159,7 @@ def _run_job(
     similarity_mode: str = "bigram",
     accept_threshold: float = 0.4,
     source_filename: str = None,
-    method: str = "whisper",
+    method: str = "stable-ts",
 ):
     """Background worker: download (if URL) + align, storing progress."""
     global _current_job_id
@@ -265,7 +265,7 @@ async def create_job(
     separate_vocals: bool = Form(False),
     similarity: str = Form("bigram"),
     accept_threshold: float = Form(0.4),
-    method: str = Form("whisper"),
+    method: str = Form("stable-ts"),
     hf_token: str = Form(None),
 ):
     """Start an alignment job. Returns {"job_id": ...} immediately."""
@@ -415,7 +415,7 @@ async def align_endpoint(
     language: str = Form(None),
     offset: float = Form(0.0),
     separate_vocals: bool = Form(False),
-    method: str = Form("whisper"),
+    method: str = Form("stable-ts"),
 ):
     """Upload audio + lyrics, return synced LRC text."""
     # Save uploaded audio to temp file
@@ -448,7 +448,7 @@ async def youtube_endpoint(
     language: str = Form(None),
     offset: float = Form(0.0),
     separate_vocals: bool = Form(False),
-    method: str = Form("whisper"),
+    method: str = Form("stable-ts"),
 ):
     """Download from YouTube, then align with lyrics. Returns LRC text."""
     import tempfile
@@ -543,7 +543,11 @@ async def paxsenix_endpoint(id: str):
 
 @app.get("/api/lookup")
 async def lookup_endpoint(artist: str = None, track: str = None, duration: float = None, id: int = None):
-    """Retry ID lookup without re-publishing. Returns {"id": ...} or 404."""
+    """Fetch an LRCLIB record (by id, or by artist+track+duration).
+
+    Returns the full record (including ``syncedLyrics``) when found, so a
+    selected search result can display its full LRC. Always includes ``id``.
+    """
     from fastapi.responses import JSONResponse
     from lrclib import get_by_id, lookup_record
 
@@ -560,7 +564,10 @@ async def lookup_endpoint(artist: str = None, track: str = None, duration: float
         return JSONResponse(status_code=400, content={"error": str(e)})
     if record is None:
         return JSONResponse(status_code=404, content={"error": "Not found on LRCLIB yet"})
-    return {"id": record.get("id")}
+    # Ensure the convenience id field is present even for minimal records.
+    if isinstance(record, dict) and "id" not in record and id is not None:
+        record = dict(record, id=id)
+    return record
 
 
 @app.post("/api/publish")

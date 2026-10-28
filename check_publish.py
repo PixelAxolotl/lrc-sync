@@ -6,32 +6,21 @@ Usage:
 """
 
 import argparse
-import json
-import urllib.parse
-import urllib.request
 
 from logger import log
+from lrclib import lookup_record
 
 
 def check(artist: str, track: str, duration: float):
-    params = urllib.parse.urlencode({
-        "artist_name": artist,
-        "track_name": track,
-        "duration": duration,
-    })
-    url = f"https://lrclib.net/api/get?{params}"
-    req = urllib.request.Request(
-        url, headers={"User-Agent": "lrc-sync/1.0"},
-    )
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            record = json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        if e.code == 404:
-            log("ERROR", f"NOT FOUND on LRCLIB: {artist} - {track} ({duration}s)")
-            log("WARN", "Note: new publishes take a while to appear; retry /api/search to confirm visibility.")
-            return False
+        record = lookup_record(artist, track, duration)
+    except Exception as e:
+        log("ERROR", f"LRCLIB lookup failed: {e}")
         raise
+    if not record:
+        log("ERROR", f"NOT FOUND on LRCLIB: {artist} - {track} ({duration}s)")
+        log("WARN", "Note: new publishes take a while to appear; retry /api/search to confirm visibility.")
+        return False
 
     synced = record.get("syncedLyrics") or ""
     plain = record.get("plainLyrics") or ""

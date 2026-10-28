@@ -1,14 +1,13 @@
 # LRC Sync
 
-Sync lyrics with audio to create LRC files using forced alignment (Whisper,
-WhisperX, or stable-ts).
+Sync lyrics with audio to create LRC files using forced alignment (stable-ts
+or Whisper).
 
 ## Features
 
 - **Audio file or YouTube URL** as input (auto-download via yt-dlp)
 - **Whisper transcription** (faster-whisper) with word-level timestamps
-- **Multiple alignment backends** — Whisper (default), WhisperX (wav2vec2
-  forced alignment), and stable-ts
+- **Multiple alignment backends** — stable-ts (default) and Whisper
 - **Fuzzy lyric alignment**, including character-level matching for Japanese/Chinese/Korean
 - **Web UI** with live progress bar (download → transcribe → match)
 - **Publish to [LRCLIB](https://lrclib.net)** (handles its proof-of-work challenge automatically)
@@ -26,14 +25,8 @@ WhisperX, or stable-ts).
 pip install -r requirements.txt
 ```
 
-Optional alignment backends are installed from the repo root (the package is not
-published to PyPI, so do not use `pip install lrc-sync[...]`):
-
-```bash
-pip install -e .[stable-ts]
-# or
-pip install -e .[whisperx]
-```
+`stable-ts` is a required dependency and is installed by
+`requirements.txt`; no extra step is needed.
 
 ## Usage
 
@@ -74,7 +67,7 @@ Options:
 - `--offset`: Time offset in seconds (positive = lyrics appear later)
 - `--beam-size`: Whisper beam size. Default: `5`
 - `--similarity`: line matching score, `bigram` (default) | `sets` | `both`
-- `--method`: alignment backend, `whisper` (default) | `whisperx` | `stable-ts`
+- `--method`: alignment backend, `stable-ts` (default) | `whisper`
 - `--accept-threshold`: minimum score to accept a line. Default: `0.4`
 - `--no-interpolate`: place unmatched lines at previous+1s instead of
   interpolating between matched neighbours
@@ -88,29 +81,15 @@ avoids the old compounding "previous line + 1s" ramp. Pass `--similarity sets
 
 ### Alignment methods
 
-`whisper` is the default. `stable-ts` and `whisperx` are optional backends.
-The expanded 30-track ja/en benchmark below compares `whisper` and `stable-ts`
-at `medium`; `stable-ts` wins on the held-out batch (64.9% vs 60.9% within 1s)
-and is clearly better on English. `whisperx` is not recommended on this corpus:
-its pyannote VAD treats sung vocals as non-speech on many tracks, leaving too
-few words to align.
+`stable-ts` is the default. The expanded 30-track ja/en benchmark below
+compares `stable-ts` and `whisper` at `medium`; `stable-ts` wins on the held-out
+batch (64.9% vs 60.9% within 1s) and is clearly better on English.
 
-- `whisper` (default): faster-whisper transcription + the fuzzy matcher above.
-  Works offline from the local model cache.
-- `whisperx`: Whisper transcription followed by wav2vec2 forced alignment.
-  Requires the align model
-  (`jonatasgrosman/wav2vec2-large-xlsr-53-japanese`, cached locally) and
-  pyannote-audio.
-- `stable-ts`: stable-ts transcription with word-level timestamps.
+- `stable-ts` (default): stable-ts transcription with word-level timestamps.
+- `whisper`: faster-whisper transcription + the fuzzy matcher above. Works
+  offline from the local model cache.
 
 Select with `--method` (CLI) or the **Alignment method** dropdown (web UI).
-Optional backends are installed from the repo root:
-
-```bash
-pip install -e .[whisperx]
-# or
-pip install -e .[stable-ts]
-```
 
 ### Check an LRCLIB entry
 
@@ -120,7 +99,7 @@ python check_publish.py --artist "Artist" --track "Song" --duration 215
 
 ## API
 
-- `POST /api/jobs` — start an alignment job (file or YouTube URL), returns `{"job_id"}`; accepts an optional `method` field (`whisper`/`whisperx`/`stable-ts`)
+- `POST /api/jobs` — start an alignment job (file or YouTube URL), returns `{"job_id"}`; accepts an optional `method` field (`stable-ts`/`whisper`)
 - `GET /api/jobs/{id}` — poll `{stage, percent, message, lrc, error}`
 - `POST /api/publish` — publish LRC to LRCLIB
 - Legacy: `POST /api/align`, `POST /api/youtube`

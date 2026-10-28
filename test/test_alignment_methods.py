@@ -12,14 +12,14 @@ def test_dispatch_uses_selected_backend():
     words = [aligner.WordTimestamp(word="hi", start=0.0, end=1.0)]
     with patch("aligner.get_backend", return_value=_fake_backend(words)):
         with patch("aligner.convert_to_wav", lambda p: p), patch("aligner.wav_duration_seconds", lambda p: 1.0):
-            res = aligner.align("x.wav", "hi", method="whisperx")
+            res = aligner.align("x.wav", "hi", method="stable-ts")
     assert res.lrc_text.count("[") == 1
 
 def test_parity_shape_parametrized():
     words = [aligner.WordTimestamp(word="hi", start=0.0, end=1.0),
              aligner.WordTimestamp(word="there", start=1.0, end=2.0)]
     lyrics = "hi\nthere"
-    for method in ("whisper", "whisperx", "stable-ts"):
+    for method in ("stable-ts", "whisper"):
         with patch("aligner.get_backend", return_value=_fake_backend(words)):
             with patch("aligner.convert_to_wav", lambda p: p), patch("aligner.wav_duration_seconds", lambda p: 2.0):
                 res = aligner.align("x.wav", lyrics, method=method)

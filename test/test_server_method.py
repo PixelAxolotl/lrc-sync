@@ -12,7 +12,7 @@ def test_align_endpoint_accepts_method():
         m.return_value.sync_text = ""
         c = TestClient(server.app)
         import io
-        r = c.post("/api/align", data={"lyrics": "hi", "method": "whisperx"}, files={"audio": ("a.mp3", io.BytesIO(b"x"), "audio/mpeg")})
+        r = c.post("/api/align", data={"lyrics": "hi", "method": "stable-ts"}, files={"audio": ("a.mp3", io.BytesIO(b"x"), "audio/mpeg")})
         assert r.status_code in (200, 500)
         if m.called:
-            assert m.call_args.kwargs.get("method") == "whisperx"
+            assert m.call_args.kwargs.get("method") == "stable-ts"
