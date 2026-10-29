@@ -116,7 +116,14 @@ def convert_to_wav(audio_path: str, output_path: Optional[str] = None) -> str:
     return output_path
 
 
-_LOCAL_MODELS_DIR = Path(__file__).parent / "whisper_models"
+_PROJECT_MODELS_DIR = Path(__file__).parent / "whisper_models"
+if _PROJECT_MODELS_DIR.exists():
+    _LOCAL_MODELS_DIR = _PROJECT_MODELS_DIR
+else:
+    _LOCAL_MODELS_DIR = (
+        Path(os.environ.get("LOCALAPPDATA", Path.home()))
+        / "lrc-sync" / "whisper_models"
+    )
 
 # English-only Whisper variants. Faster to load and slightly more accurate
 # on English, but they cannot transcribe other languages — Whisper will
