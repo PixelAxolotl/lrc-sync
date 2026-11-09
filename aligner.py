@@ -556,6 +556,27 @@ def _normalize(text: str) -> str:
     return re.sub(r"[^\w\s]", "", folded.lower()).strip()
 
 
+_PARENTHETICAL_RE = re.compile(r"\([^)]*\)|\[[^\]]*\]|（[^）]*）|【[^】]*】")
+
+
+def _match_text(text: str) -> str:
+    """Lyric text to score, ignoring parenthetical backing vocals.
+
+    LRC sources interleave the lead line and its backing vocals, e.g.
+    "We could've had it all (you're gonna wish you never had met me)". The
+    transcript follows the lead, so scoring the whole line halves the
+    similarity and the line is rejected. Keep the full text when the
+    parenthetical is all there is.
+    """
+    stripped = _PARENTHETICAL_RE.sub(" ", text)
+    stripped_len = len(_normalize(stripped))
+    # Keep the full text when the parenthetical is all there is; a single CJK
+    # character is still a usable lyric, so scale the guard by length.
+    if stripped_len and (stripped_len >= 2 or stripped_len * 4 >= len(_normalize(text))):
+        return stripped
+    return text
+
+
 def _contains_cjk(text: str) -> bool:
     """Check if text contains CJK characters (Chinese, Japanese, Korean)."""
     for ch in text:
@@ -567,6 +588,21 @@ def _contains_cjk(text: str) -> bool:
                 0xAC00 <= o <= 0xD7AF):  # hangul syllables
             return True
     return False
+
+
+def _best_window(norm_line: str, norm_words: list, start: int, end: int,
+                 span: int, window_pad: int, mode: str):
+    """Best-scoring run of up to ``span + window_pad`` words starting in
+    ``[start, end)``. Returns (score, first_word_idx, last_word_idx)."""
+    best = (0.0, None, None)
+    for i in range(max(0, start), min(len(norm_words), end)):
+        parts = []
+        for j in range(i, min(i + span + window_pad, len(norm_words))):
+            parts.append(norm_words[j][1])
+            score = _similarity(norm_line, " ".join(parts), mode=mode)
+            if score > best[0]:
+                best = (score, i, j)
+    return best
 
 
 def match_lyrics_to_words(
@@ -640,7 +676,7 @@ def match_lyrics_to_words(
         line_stripped = line.strip()
         if not line_stripped:
             continue
-        norm_line = _normalize(line_stripped)
+        norm_line = _normalize(_match_text(line_stripped))
         if not norm_line:
             # A line that normalizes to nothing - a bare "♪", or pure
             # punctuation - still needs an entry in the output, otherwise the
@@ -652,11 +688,6 @@ def match_lyrics_to_words(
             continue
         kept.append(line_stripped)
 
-        best_start = None
-        best_score = 0.0
-        best_end_idx = word_idx
-        best_i = None
-
         # Estimate how many whisper words a line spans.
         # CJK text has no spaces, so estimate from character count instead.
         if _contains_cjk(norm_line):
@@ -664,29 +695,22 @@ def match_lyrics_to_words(
         else:
             est_words = len(norm_line.split())
 
+        prev_start = next(
+            (p["start"] for p in reversed(picks) if p is not None), None)
+
         # Search through remaining words
         search_start = max(0, word_idx - backtrack)  # allow some backtracking
         search_end = min(total_words, word_idx + est_words * lookahead_mult + lookahead_extra)
-
-        for i in range(search_start, search_end):
-            candidate_words = []
-            for j in range(i, min(i + est_words + window_pad, total_words)):
-                candidate_words.append(norm_words[j][1])
-                candidate_text = " ".join(candidate_words)
-                score = _similarity(norm_line, candidate_text, mode=similarity_mode)
-                if score > best_score:
-                    best_score = score
-                    best_start = norm_words[i][0].start
-                    best_end_idx = j
-                    best_i = i
+        best_score, best_i, best_end_idx = _best_window(
+            norm_line, norm_words, search_start, search_end,
+            est_words, window_pad, similarity_mode)
 
         matched = False
-        if best_start is not None and best_score > accept_threshold:
+        if best_i is not None and best_score > accept_threshold:
             # Enforce monotonic timestamps: never go back in time.
             # A match earlier than the previous accepted line is spurious
             # (e.g. a repeated chorus fragment) - fall back instead.
-            prev_start = next(
-                (p["start"] for p in reversed(picks) if p is not None), None)
+            best_start = norm_words[best_i][0].start
             if prev_start is None or best_start >= prev_start:
                 matched = True
                 # anchor_shift nudges the line start later. Whisper's first

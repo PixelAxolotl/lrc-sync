@@ -91,3 +91,31 @@ def test_consecutive_unmatched_lines_do_not_stack_into_a_ramp():
 def test_normalize_folds_fullwidth_forms():
     assert aligner._normalize("ＴＯＫＩＯ") == aligner._normalize("TOKIO")
     assert aligner._normalize("ＡＢＣ　ＤＥＦ") == aligner._normalize("ABC DEF")
+
+
+def test_match_text_drops_parenthetical_backing_vocals():
+    line = "We could've had it all (you're gonna wish you never had met me)"
+    assert aligner._normalize(aligner._match_text(line)) == \
+        aligner._normalize("We could've had it all")
+    assert aligner._match_text("（Rolling in the deep）") == "（Rolling in the deep）"
+    assert aligner._normalize(aligner._match_text("歌（うた）")) == \
+        aligner._normalize("歌")
+
+
+def test_parenthetical_line_matches_the_lead_vocal():
+    """The transcript only sings the lead; the backing vocal in parentheses
+    must not stop the line from matching."""
+    lyrics = ["We could've had it all (you're gonna wish you never had met me)",
+              "(Never had met me)",
+              "Rolling in the deep (tears are gonna fall)"]
+    words = [W("we", 1, 2), W("could've", 2, 3), W("had", 3, 4),
+             W("it", 4, 5), W("all", 5, 6),
+             W("rolling", 20, 21), W("in", 21, 22), W("the", 22, 23),
+             W("deep", 23, 24)]
+
+    lines, _, spans = aligner.match_lyrics_to_words(lyrics, words, return_spans=True)
+
+    assert spans[0] is not None, "lead line with parenthetical must match"
+    assert abs(lines[0].start - 1.0) < 0.01
+    assert spans[2] is not None, "parenthetical tail must not block the match"
+    assert abs(lines[2].start - 20.0) < 0.01

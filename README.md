@@ -79,6 +79,12 @@ are placed by interpolating between their nearest matched neighbours, which
 avoids the old compounding "previous line + 1s" ramp. Pass `--similarity sets
 --no-interpolate` to restore the previous behaviour.
 
+Text inside parentheses, brackets or full-width parentheses — LRCLIB-style
+backing vocals such as `We could've had it all (you're gonna wish you never
+had met me)` — is ignored when scoring a line, because the transcript follows
+the lead vocal. The line is still output in full; a line that consists only of
+a parenthetical is matched on its full text.
+
 ### Alignment methods
 
 `stable-ts` is the default. The expanded 30-track ja/en benchmark below
