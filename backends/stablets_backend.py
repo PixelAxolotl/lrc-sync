@@ -1,12 +1,28 @@
 def align_audio(audio_path, lines, lang, model_size, progress_callback=None, **kwargs):
+    import os
     try:
         import stable_whisper
     except ImportError as e:
         raise RuntimeError("stable-ts is not installed. Install with: pip install stable-ts") from e
-    from aligner import WordTimestamp
+    from aligner import WordTimestamp, _MODEL_CACHE_LOCK, request_token
     if progress_callback:
         progress_callback("loading_model", 0, "Loading stable-ts model...")
-    model = stable_whisper.load_model(model_size)
+    # stable-ts resolves its HF token from the environment, which is shared by
+    # every thread. Set it only around this load, under the same lock model
+    # loads use elsewhere, and restore whatever was there before.
+    token = request_token()
+    with _MODEL_CACHE_LOCK:
+        previous = os.environ.get("HF_TOKEN")
+        if token:
+            os.environ["HF_TOKEN"] = token
+        try:
+            model = stable_whisper.load_model(model_size)
+        finally:
+            if token:
+                if previous is None:
+                    os.environ.pop("HF_TOKEN", None)
+                else:
+                    os.environ["HF_TOKEN"] = previous
     if progress_callback:
         progress_callback("transcribing", 0, "Transcribing...")
     def _st_cb(seek, total=None, *rest):

@@ -7,6 +7,8 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
+from collections import OrderedDict
 from collections import Counter
 
 # Prefer the HF mirror so downloads work where huggingface.co is flaky
@@ -110,9 +112,14 @@ def convert_to_wav(audio_path: str, output_path: Optional[str] = None) -> str:
         "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le",
         output_path
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
-    if result.returncode != 0:
-        raise RuntimeError(f"ffmpeg conversion failed: {result.stderr}")
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+        if result.returncode != 0:
+            raise RuntimeError(f"ffmpeg conversion failed: {result.stderr}")
+    except BaseException:
+        # A failed conversion leaves a partial (often zero-byte) WAV behind.
+        Path(output_path).unlink(missing_ok=True)
+        raise
     return output_path
 
 
@@ -127,9 +134,6 @@ EN_ONLY_MODELS = frozenset({"tiny.en", "base.en", "small.en", "medium.en"})
 def is_english_only_model(model_size: str) -> bool:
     """True if the model is an English-only (.en) Whisper variant."""
     return model_size in EN_ONLY_MODELS
-
-_tiny_model = None
-
 
 
 def _model_source(model_size: str) -> str:
@@ -204,83 +208,112 @@ def detect_language_from_text(text: str) -> Optional[str]:
     return None
 
 
-_MODEL_CACHE: dict = {}  # model name -> WhisperModel (reloading costs seconds/GB)
+_MODEL_CACHE: "OrderedDict[str, object]" = OrderedDict()  # reloading costs seconds/GB
+# Whisper models are ~GB each, so keep only a few resident. Loads are serialized
+# so two jobs can't download the same weights twice or blow past the limit.
+_MODEL_CACHE_LOCK = threading.RLock()
+try:
+    MODEL_CACHE_LIMIT = max(1, int(os.environ.get("LRC_SYNC_MODEL_CACHE", "2")))
+except ValueError:
+    MODEL_CACHE_LIMIT = 2
+
+# Per-job Hugging Face token. Thread-local because each job runs in its own
+# worker thread; never written to os.environ, which is process-wide.
+_TOKEN_CTX = threading.local()
 
 
-def _load_whisper_model(name: str, progress_callback=None):
+def set_request_token(token: Optional[str]) -> None:
+    """Attach an HF token to the current worker thread's job."""
+    _TOKEN_CTX.token = (token or "").strip() or None
+
+
+def request_token() -> Optional[str]:
+    """The HF token provided for the current job, if any."""
+    return getattr(_TOKEN_CTX, "token", None)
+
+
+def _load_whisper_model(name: str, progress_callback=None, cache: bool = True):
     """Load a faster-whisper model; fall back to ModelScope if HF fails.
 
     Results are memoized per process: loading re-reads the full weight set
     from disk, which dominates runtime when sweeping several configurations
     over the same track.
     """
-    cached = _MODEL_CACHE.get(name)
-    if cached is not None:
-        log("INFO", f"Reusing loaded faster-whisper model '{name}'.")
-        return cached
+    with _MODEL_CACHE_LOCK:
+        if cache:
+            cached = _MODEL_CACHE.get(name)
+            if cached is not None:
+                _MODEL_CACHE.move_to_end(name)
+                log("INFO", f"Reusing loaded faster-whisper model '{name}'.")
+                return cached
 
-    from faster_whisper import WhisperModel
-    common = dict(device="cpu", compute_type="int8",
-                  download_root=str(_LOCAL_MODELS_DIR))
-    log("INFO", f"Loading faster-whisper model '{name}' (CPU/int8)...")
-    local = _LOCAL_MODELS_DIR / name
-    download_needed = not Path(_model_source(name)).exists() and not _already_downloaded(name)
-    if download_needed:
-        _maybe_prompt_for_hf_token(name)
-        if progress_callback:
-            progress_callback("downloading", 0, f"Downloading '{name}' from Hugging Face...")
-        log("INFO", f"Model '{name}' not found locally — downloading from Hugging Face...")
-    import threading, time
-    stop = threading.Event()
-    prev_mb = -1.0
+        from faster_whisper import WhisperModel
+        common = dict(device="cpu", compute_type="int8",
+                      download_root=str(_LOCAL_MODELS_DIR))
+        log("INFO", f"Loading faster-whisper model '{name}' (CPU/int8)...")
+        download_needed = not Path(_model_source(name)).exists() and not _already_downloaded(name)
+        token = request_token()
+        if download_needed:
+            if not token:
+                token = _maybe_prompt_for_hf_token(name)
+            if progress_callback:
+                progress_callback("downloading", 0, f"Downloading '{name}' from Hugging Face...")
+            log("INFO", f"Model '{name}' not found locally — downloading from Hugging Face...")
+        stop = threading.Event()
+        prev_mb = -1.0
 
-    def _report_size():
-        nonlocal prev_mb
-        watch = [_LOCAL_MODELS_DIR / name]
-        expected = _expected_cache_dir(name)
-        if expected:
-            watch.append(_LOCAL_MODELS_DIR / expected)
-        while not stop.wait(2.0):
-            try:
-                mb = 0.0
-                for root in watch:
-                    if root.is_file():
-                        try:
-                            mb += root.stat().st_size / 1e6
-                        except OSError:
-                            continue
-                    elif root.is_dir():
-                        for f in root.rglob("*"):
-                            if f.is_file():
-                                try:
-                                    mb += f.stat().st_size / 1e6
-                                except OSError:
-                                    continue
-                if mb > prev_mb + 0.5:  # only print when it actually grows
-                    delta = mb if prev_mb < 0 else mb - prev_mb
-                    log("INFO", f"downloaded {delta:.1f} MB (total in whisper_models: {mb:.1f} MB)...")
-                    if progress_callback:
-                        progress_callback("downloading", 0, f"Downloading '{name}'… {mb:.0f} MB received")
-                    prev_mb = mb
-            except Exception:
-                pass
+        def _report_size():
+            nonlocal prev_mb
+            watch = [_LOCAL_MODELS_DIR / name]
+            expected = _expected_cache_dir(name)
+            if expected:
+                watch.append(_LOCAL_MODELS_DIR / expected)
+            while not stop.wait(2.0):
+                try:
+                    mb = 0.0
+                    for root in watch:
+                        if root.is_file():
+                            try:
+                                mb += root.stat().st_size / 1e6
+                            except OSError:
+                                continue
+                        elif root.is_dir():
+                            for f in root.rglob("*"):
+                                if f.is_file():
+                                    try:
+                                        mb += f.stat().st_size / 1e6
+                                    except OSError:
+                                        continue
+                    if mb > prev_mb + 0.5:  # only print when it actually grows
+                        delta = mb if prev_mb < 0 else mb - prev_mb
+                        log("INFO", f"downloaded {delta:.1f} MB (total in whisper_models: {mb:.1f} MB)...")
+                        if progress_callback:
+                            progress_callback("downloading", 0, f"Downloading '{name}'… {mb:.0f} MB received")
+                        prev_mb = mb
+                except Exception:
+                    pass
 
-    if download_needed:
-        t = threading.Thread(target=_report_size, daemon=True)
-        t.start()
+        if download_needed:
+            t = threading.Thread(target=_report_size, daemon=True)
+            t.start()
 
-    try:
-        model = WhisperModel(_model_source(name), **common)
-        log("INFO", f"Model '{name}' ready.")
-        _MODEL_CACHE[name] = model
-        return model
-    except Exception as e:
-        log("ERROR", f"HF download/load failed for '{name}' ({e}).")
-    finally:
-        stop.set()
-    raise RuntimeError(
-        f"Could not obtain faster-whisper model '{name}' from HF (mirror). "
-        "Pre-download it into whisper_models/.")
+        try:
+            model = WhisperModel(_model_source(name), use_auth_token=token or None, **common)
+            log("INFO", f"Model '{name}' ready.")
+            if cache:
+                _MODEL_CACHE[name] = model
+                _MODEL_CACHE.move_to_end(name)
+                while len(_MODEL_CACHE) > MODEL_CACHE_LIMIT:
+                    evicted, _ = _MODEL_CACHE.popitem(last=False)
+                    log("INFO", f"Evicted model '{evicted}' from memory cache.")
+            return model
+        except Exception as e:
+            log("ERROR", f"HF download/load failed for '{name}' ({e}).")
+        finally:
+            stop.set()
+        raise RuntimeError(
+            f"Could not obtain faster-whisper model '{name}' from HF (mirror). "
+            "Pre-download it into whisper_models/.")
 
 
 def _already_downloaded(name: str) -> bool:
@@ -305,34 +338,38 @@ def _already_downloaded(name: str) -> bool:
 TOKEN_PROVIDER = None  # optional callable(model_name) -> token or ""
 
 
-def _maybe_prompt_for_hf_token(name: str):
-    """Ask for an HF token when a model still needs downloading (CLI only)."""
+def _maybe_prompt_for_hf_token(name: str) -> Optional[str]:
+    """Return an HF token for a model that still needs downloading.
+
+    Asks through the web UI when one is attached, otherwise the terminal.
+    Never mutates os.environ: the token is handed to the loader for this
+    request only, so concurrent jobs cannot inherit each other's token.
+    """
     if _already_downloaded(name):
-        return
+        return None
     if os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN"):
-        return
+        return None
     log("INFO", f"Model '{name}' is not downloaded yet. Hugging Face may require an access token. Paste an HF token to use, or press Enter / 'n' to continue without one.")
     try:
         import sys
         if TOKEN_PROVIDER is not None:
             token = TOKEN_PROVIDER(name).strip()
             if token and token.lower() not in ("n", "no", "skip"):
-                os.environ["HF_TOKEN"] = token
                 log("INFO", "HF_TOKEN set from web UI.")
-            else:
-                log("INFO", "User chose to continue without a token.")
-            return
+                return token
+            log("INFO", "User chose to continue without a token.")
+            return None
         if not sys.stdin.isatty():
             log("WARN", "No interactive terminal detected; proceeding without a token.")
-            return
+            return None
         token = input("HF token (or Enter / n to skip): ").strip()
     except (EOFError, OSError):
-        return
+        return None
     if token and token.lower() not in ("n", "no", "skip"):
-        os.environ["HF_TOKEN"] = token
         log("INFO", "HF_TOKEN set for this session.")
-    else:
-        log("INFO", "Continuing without a token.")
+        return token
+    log("INFO", "Continuing without a token.")
+    return None
 
 
 def _load_wav_mono16k(wav_path: str) -> Optional["np.ndarray"]:
@@ -378,12 +415,10 @@ def _whisper_audio_input(wav_path: str):
 
 def detect_language_tiny(wav_path: str) -> tuple[str, float]:
     """Detect audio language with a tiny CPU model (fast), for auto mode."""
-    global _tiny_model
-
-    if _tiny_model is None:
-        _tiny_model = _load_whisper_model("tiny")
+    # Through the shared cache so the eviction limit actually applies.
+    model = _load_whisper_model("tiny")
     audio = _whisper_audio_input(wav_path)
-    language, probability, _ = _tiny_model.detect_language(audio)
+    language, probability, _ = model.detect_language(audio)
     return language, probability
 
 
@@ -1048,17 +1083,18 @@ def align(
                 f"model instead."
             )
 
-    # Convert audio to WAV
-    if progress_callback:
-        progress_callback("converting", 0, "Converting audio...")
-    wav_path = convert_to_wav(audio_path)
-    # Read length from the WAV we just made — it is the same clock the LRC
-    # timestamps use, so the UI's LRCLIB duration matches the sync output.
-    result.duration = wav_duration_seconds(wav_path)
-    if progress_callback:
-        progress_callback("converting", 100, "Audio converted")
-
+    # The WAV is created inside the try so a conversion failure cannot leak it.
+    wav_path = None
     try:
+        if progress_callback:
+            progress_callback("converting", 0, "Converting audio...")
+        wav_path = convert_to_wav(audio_path)
+        # Read length from the WAV we just made — it is the same clock the LRC
+        # timestamps use, so the UI's LRCLIB duration matches the sync output.
+        result.duration = wav_duration_seconds(wav_path)
+        if progress_callback:
+            progress_callback("converting", 100, "Audio converted")
+
         # Transcribe with Whisper
         if language is None:
             script_lang = detect_language_from_text(lyrics_text)
@@ -1147,7 +1183,7 @@ def align(
 
     finally:
         # Clean up temp WAV
-        if os.path.exists(wav_path):
+        if wav_path and os.path.exists(wav_path):
             os.remove(wav_path)
 
     return result

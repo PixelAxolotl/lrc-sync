@@ -6,7 +6,10 @@ import json
 import os
 import re
 import shutil
+import socket
 import tempfile
+import ipaddress
+import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -44,6 +47,53 @@ _NOISE_WORDS = (
 _NOISE_TAIL_SEP_RE = re.compile(r"\s+[-–—|]\s+")
 _WHITESPACE_RE = re.compile(r"\s+")
 _TRAILING_SEP_RE = re.compile(r"\s+[-–—|]+$")
+
+_ALLOWED_URL_SCHEMES = ("http", "https")
+
+
+class UnsafeURLError(ValueError):
+    """Raised when a media URL would make the server fetch something internal."""
+
+
+def _is_public_ip(ip: "ipaddress.IPv4Address | ipaddress.IPv6Address") -> bool:
+    return not (
+        ip.is_private or ip.is_loopback or ip.is_link_local
+        or ip.is_multicast or ip.is_reserved or ip.is_unspecified
+    )
+
+
+def validate_media_url(url: str) -> str:
+    """Return `url` when it is a public http(s) target; raise otherwise.
+
+    yt-dlp will happily fetch file:// URLs and internal hosts, so the URL is
+    checked before it is handed over (SSRF guard). Hostnames are resolved and
+    every address must be public.
+    """
+    text = (url or "").strip()
+    if not text:
+        raise UnsafeURLError("Empty URL")
+    parsed = urllib.parse.urlsplit(text)
+    if parsed.scheme.lower() not in _ALLOWED_URL_SCHEMES:
+        raise UnsafeURLError("Only http(s) URLs are supported")
+    host = parsed.hostname
+    if not host:
+        raise UnsafeURLError("URL has no host")
+    lowered = host.lower()
+    if lowered == "localhost" or lowered.endswith(".localhost"):
+        raise UnsafeURLError("Refusing to download from localhost")
+    try:
+        infos = socket.getaddrinfo(
+            host, parsed.port or (443 if parsed.scheme.lower() == "https" else 80),
+            proto=socket.IPPROTO_TCP,
+        )
+    except socket.gaierror:
+        # Unresolvable here means yt-dlp cannot reach it either.
+        return text
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0].split("%", 1)[0])
+        if not _is_public_ip(ip):
+            raise UnsafeURLError(f"Refusing to download from a private address ({ip})")
+    return text
 
 
 def _is_noise_phrase(text: str) -> bool:
@@ -140,6 +190,8 @@ def download_audio_with_info(
     title even though yt-dlp is never invoked on the cache-hit path.
     """
     import hashlib
+
+    url = validate_media_url(url)
 
     if output_dir is None:
         output_dir = str(DEFAULT_TEMP_DIR)
