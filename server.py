@@ -6,19 +6,20 @@ Usage:
 """
 import argparse
 import logging
+import os
 import re
 import sys
 import tempfile
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, File, Form, UploadFile
+from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 import aligner
 from aligner import align
-from downloader import download_audio, download_audio_with_info
+from downloader import download_audio, download_audio_with_info, validate_media_url
 from lrclib import publish_lrc
 
 import threading
@@ -31,6 +32,19 @@ from logger import JobPollFilter as _JobPollFilter
 JobPollFilter = _JobPollFilter
 
 app = FastAPI(title="lrc-sync", description="Sync lyrics with audio to create LRC files")
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
+# Upload and concurrency ceilings. Both are process-wide because every job
+# shares one Whisper cache and one set of worker threads.
+MAX_UPLOAD_BYTES = _env_int("LRC_SYNC_MAX_UPLOAD_MB", 500) * 1024 * 1024
+MAX_CONCURRENT_JOBS = max(1, _env_int("LRC_SYNC_MAX_JOBS", 2))
 
 # All-model pre-download status (for the "download all models" UI button)
 _MODEL_SIZES = ["tiny", "base", "small", "medium", "large-v3-turbo",
@@ -81,36 +95,45 @@ CHARACTER_LEVEL = True
 DEBUG = False
 
 
-# Web UI HF-token prompt coordination
-_ui_token = {"evt": None, "token": "", "model": None}
+# Web UI HF-token prompt coordination, one pending request per job ("" for the
+# model-download worker). Per-job so concurrent jobs never see each other's
+# prompt or token.
+_ui_tokens: dict = {}
+_ui_tokens_lock = threading.Lock()
 _job_ctx = threading.local()
 
 
 def _ui_token_provider(model_name):
-    global _ui_token
-    current_job_id = getattr(_job_ctx, "current_job_id", None)
-    if _ui_token["evt"] is not None:
-        _ui_token["evt"].set()
-        _ui_token["evt"] = None
-    evt = threading.Event()
-    _ui_token = {"evt": evt, "token": "", "model": model_name}
+    key = getattr(_job_ctx, "current_job_id", None) or ""
+    # Only the model-download worker (no job id) owns the download-status flag;
+    # a job's prompt must not overwrite it for another job.
+    is_model_download = not key
+    entry = {"evt": threading.Event(), "token": "", "model": model_name}
+    with _ui_tokens_lock:
+        previous = _ui_tokens.get(key)
+        _ui_tokens[key] = entry
+    if previous is not None:
+        previous["evt"].set()
     with jobs_lock:
-        job = jobs.get(current_job_id)
+        job = jobs.get(key)
         if job is not None:
             job["need_token"] = model_name
-    with _model_dl_lock:
-        _model_dl["need_token"] = model_name
+    if is_model_download:
+        with _model_dl_lock:
+            _model_dl["need_token"] = model_name
     _log("INFO", f"Waiting for HF token via web UI (model={model_name})...")
-    evt.wait(timeout=900)
+    entry["evt"].wait(timeout=900)
     with jobs_lock:
-        job = jobs.get(current_job_id)
+        job = jobs.get(key)
         if job is not None:
             job.pop("need_token", None)
-    with _model_dl_lock:
-        _model_dl.pop("need_token", None)
-    token = _ui_token.get("token", "")
-    _ui_token = {"evt": None, "token": "", "model": None}
-    return token
+    if is_model_download:
+        with _model_dl_lock:
+            _model_dl.pop("need_token", None)
+    with _ui_tokens_lock:
+        if _ui_tokens.get(key) is entry:
+            _ui_tokens.pop(key, None)
+    return entry.get("token", "")
 
 # Cancel events per running job
 job_cancel: dict = {}
@@ -191,9 +214,12 @@ def _run_job(
     accept_threshold: float = 0.4,
     source_filename: str = None,
     method: str = "stable-ts",
+    hf_token: str = None,
 ):
     """Background worker: download (if URL) + align, storing progress."""
     _job_ctx.current_job_id = job_id
+    # Thread-local: this job's token never leaks into another job's load.
+    aligner.set_request_token(hf_token)
 
     def cb(stage, percent, message):
         if _job_cancelled(job_id):
@@ -278,12 +304,14 @@ def _run_job(
                 })
         _schedule_job_cleanup(job_id)
     finally:
+        aligner.set_request_token(None)
         for p in (cleanup_paths or []):
             Path(p).unlink(missing_ok=True)
 
 
 @app.post("/api/jobs")
 async def create_job(
+    request: Request,
     audio: UploadFile = File(None),
     url: str = Form(None),
     lyrics: str = Form(...),
@@ -300,19 +328,35 @@ async def create_job(
     hf_token: str = Form(None),
 ):
     """Start an alignment job. Returns {"job_id": ...} immediately."""
-    if (audio is None or not audio.filename) and not url:
-        from fastapi.responses import JSONResponse
+    has_audio = audio is not None and bool(audio.filename)
+    if not has_audio and not url:
         return JSONResponse(
             status_code=400,
             content={"error": "Provide an audio file or a YouTube URL."},
         )
 
-    if hf_token and hf_token.strip():
-        import os as _os
-        _os.environ["HF_TOKEN"] = hf_token.strip()
+    # Reject oversized bodies before reading them.
+    declared = request.headers.get("content-length", "")
+    if declared.isdigit() and int(declared) > MAX_UPLOAD_BYTES + (1 << 20):
+        return JSONResponse(
+            status_code=413,
+            content={"error": f"Upload exceeds the {MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit."},
+        )
 
-    job_id = uuid.uuid4().hex[:12]
+    if url:
+        try:
+            url = validate_media_url(url)
+        except ValueError as e:
+            return JSONResponse(status_code=400, content={"error": str(e)})
+
     with jobs_lock:
+        active = sum(1 for j in jobs.values() if not j.get("done"))
+        if active >= MAX_CONCURRENT_JOBS:
+            return JSONResponse(
+                status_code=429,
+                content={"error": "Server is busy: too many alignment jobs running. Try again shortly."},
+            )
+        job_id = uuid.uuid4().hex[:12]
         jobs[job_id] = {
             "stage": "queued", "percent": 0,
             "message": "Queued...", "done": False,
@@ -324,14 +368,12 @@ async def create_job(
 
     cleanup_paths = []
     audio_path = None
-    if audio is not None and audio.filename:
-        suffix = Path(audio.filename).suffix
-        with tempfile.NamedTemporaryFile(
-            delete=False, suffix=suffix,
-            dir=tempfile.gettempdir(),
-        ) as tmp:
-            tmp.write(await audio.read())
-            audio_path = tmp.name
+    if has_audio:
+        try:
+            audio_path = await _save_upload(audio)
+        except ValueError as e:
+            _cleanup_job(job_id)
+            return JSONResponse(status_code=413, content={"error": str(e)})
         cleanup_paths.append(audio_path)
 
     thread = threading.Thread(
@@ -353,11 +395,37 @@ async def create_job(
             "cleanup_paths": cleanup_paths,
             "source_filename": audio.filename if audio is not None else None,
             "method": method,
+            "hf_token": hf_token,
         },
         daemon=True,
     )
     thread.start()
     return {"job_id": job_id}
+
+
+async def _save_upload(audio: UploadFile) -> str:
+    """Stream an upload to a temp file, refusing anything over the size cap."""
+    suffix = Path(audio.filename or "").suffix
+    tmp = tempfile.NamedTemporaryFile(
+        delete=False, suffix=suffix, dir=tempfile.gettempdir(),
+    )
+    size = 0
+    try:
+        with tmp:
+            while True:
+                chunk = await audio.read(1024 * 1024)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > MAX_UPLOAD_BYTES:
+                    raise ValueError(
+                        f"Upload exceeds the {MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit."
+                    )
+                tmp.write(chunk)
+    except BaseException:
+        Path(tmp.name).unlink(missing_ok=True)
+        raise
+    return tmp.name
 
 
 @app.get("/api/jobs/{job_id}")
@@ -371,13 +439,18 @@ async def get_job(job_id: str):
 
 
 @app.post("/api/token")
-async def submit_token(token: str = Form(...)):
-    global _ui_token
-    if _ui_token.get("evt") is None:
-        from fastapi.responses import JSONResponse
+async def submit_token(token: str = Form(...), job_id: str = Form(None)):
+    with _ui_tokens_lock:
+        if job_id:
+            entry = _ui_tokens.get(job_id)
+        elif len(_ui_tokens) == 1:
+            entry = next(iter(_ui_tokens.values()))
+        else:
+            entry = None
+    if entry is None:
         return JSONResponse(status_code=400, content={"error": "No pending token request"})
-    _ui_token["token"] = (token or "").strip()
-    _ui_token["evt"].set()
+    entry["token"] = (token or "").strip()
+    entry["evt"].set()
     return {"status": "ok"}
 
 
@@ -435,7 +508,7 @@ async def get_job_words(job_id: str):
 
 
 @app.post("/api/align", response_class=PlainTextResponse)
-async def align_endpoint(
+def align_endpoint(
     audio: UploadFile = File(...),
     lyrics: str = Form(...),
     model: str = Form("medium"),
@@ -448,7 +521,13 @@ async def align_endpoint(
     # Save uploaded audio to temp file
     suffix = Path(audio.filename or "audio.mp3").suffix
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        content = await audio.read()
+        content = audio.file.read(MAX_UPLOAD_BYTES + 1)
+        if len(content) > MAX_UPLOAD_BYTES:
+            Path(tmp.name).unlink(missing_ok=True)
+            return JSONResponse(
+                status_code=413,
+                content={"error": f"Upload exceeds the {MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit."},
+            )
         tmp.write(content)
         audio_path = tmp.name
 
@@ -468,7 +547,7 @@ async def align_endpoint(
 
 
 @app.post("/api/youtube", response_class=PlainTextResponse)
-async def youtube_endpoint(
+def youtube_endpoint(
     url: str = Form(...),
     lyrics: str = Form(...),
     model: str = Form("medium"),
@@ -479,7 +558,10 @@ async def youtube_endpoint(
 ):
     """Download from YouTube, then align with lyrics. Returns LRC text."""
     # Download audio to temp file
-    audio_path = download_audio(url, output_dir=tempfile.gettempdir())
+    try:
+        audio_path = download_audio(url, output_dir=tempfile.gettempdir())
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
 
     try:
         result = align(
@@ -511,7 +593,8 @@ async def download_all_models():
             with _model_dl_lock:
                 _model_dl["current"] = size
             try:
-                m = aligner._load_whisper_model(size)
+                # Download only: caching every size would pin all weights in RAM.
+                m = aligner._load_whisper_model(size, cache=False)
                 del m
                 with _model_dl_lock:
                     _model_dl["downloaded"].append(size)
@@ -538,7 +621,7 @@ async def health():
 
 
 @app.get("/api/paxsenix")
-async def paxsenix_endpoint(id: str):
+def paxsenix_endpoint(id: str):
     """Fetch synced lyrics from Paxsenix (Apple Music TTML).
 
     Line-timed tracks return {"timing": "line", "lrc": ...};
@@ -567,7 +650,7 @@ async def paxsenix_endpoint(id: str):
 
 
 @app.get("/api/lookup")
-async def lookup_endpoint(artist: str = None, track: str = None, duration: float = None, id: int = None):
+def lookup_endpoint(artist: str = None, track: str = None, duration: float = None, id: int = None):
     """Fetch an LRCLIB record (by id, or by artist+track+duration).
 
     Returns the full record (including ``syncedLyrics``) when found, so a
@@ -596,7 +679,7 @@ async def lookup_endpoint(artist: str = None, track: str = None, duration: float
 
 
 @app.post("/api/publish")
-async def publish_endpoint(
+def publish_endpoint(
     track: str = Form(...),
     artist: str = Form(...),
     duration: float = Form(...),
@@ -610,9 +693,12 @@ async def publish_endpoint(
         _log("INFO", f"/api/publish track={track!r} artist={artist!r} duration={duration!r} album={album!r} lrc_len={len(lrc)}")
     try:
         problems = validate_lrc(lrc)
-        if problems["duplicates"] or problems["out_of_order"]:
+        # Duplicate timestamps are valid LRC (simultaneous lines); the aligner
+        # emits them for lines it cannot place. Only going backwards breaks
+        # playback order.
+        if problems["out_of_order"]:
             from fastapi.responses import JSONResponse
-            msg = "LRC timestamps must be strictly increasing"
+            msg = "LRC timestamps must not go backwards"
             return JSONResponse(status_code=400, content={
                 "status": "error", "error": msg, "message": msg,
                 "duplicates": problems["duplicates"],
@@ -652,7 +738,7 @@ async def publish_endpoint(
 
 
 @app.get("/api/search")
-async def search_endpoint(artist_name: str, track_name: str):
+def search_endpoint(artist_name: str, track_name: str):
     """Search LRCLIB for matching tracks. Returns the raw result list."""
     from fastapi.responses import JSONResponse
     from lrclib import search_records

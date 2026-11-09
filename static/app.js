@@ -173,9 +173,17 @@ function lrcIssuesText(v, text) {
         return shown.join(", ") + (arr.length > 3 ? ` (+${arr.length - 3} more)` : "");
     };
     const parts = [];
-    if ((v.duplicates || []).length) parts.push(`duplicates ${fmt(v.duplicates)}`);
+    if ((v.duplicates || []).length) parts.push(`duplicate timestamps (allowed) ${fmt(v.duplicates)}`);
     if ((v.out_of_order || []).length) parts.push(`out of order ${fmt(v.out_of_order)}`);
     return parts.join("; ");
+}
+
+function lrcBlockingIssues(v, text) {
+    // Duplicate timestamps are valid LRC (simultaneous lines), so only
+    // backwards ordering actually blocks a publish.
+    return (v.out_of_order || []).length
+        ? lrcIssuesText({ out_of_order: v.out_of_order }, text)
+        : "";
 }
 
 function setPublishEnabled(ok) {
@@ -186,11 +194,13 @@ function setPublishEnabled(ok) {
 function updateLrcIssues() {
     const box = document.getElementById("lrclibLrc");
     const v = box ? box.value : "";
-    const issues = lrcIssuesText(validateLrc(v), v);
+    const result = validateLrc(v);
+    const issues = lrcIssuesText(result, v);
+    const blocking = lrcBlockingIssues(result, v);
     const el = document.getElementById("lrclibIssues");
     if (el) el.textContent = issues;
-    setPublishEnabled(!issues);
-    return issues;
+    setPublishEnabled(!blocking);
+    return blocking;
 }
 
 const lrclibFileBox = document.getElementById("lrclibFile");
@@ -238,6 +248,7 @@ if (downloadModelsBtn) {
                 if (d.need_token) {
                     const ov = document.getElementById("tokenOverlay");
                     const msg = document.getElementById("tokenMsg");
+                    window._tokenJobId = "";
                     if (msg) msg.textContent = `Model "${d.need_token}" is not downloaded. Enter an HF token to continue, or continue without one.`;
                     if (ov) ov.style.display = "flex";
                     await new Promise((r2) => { window._tokenResolved = r2; });
@@ -269,6 +280,7 @@ async function submitHfToken(withToken) {
     try {
         const fd = new FormData();
         fd.append("token", token);
+        fd.append("job_id", window._tokenJobId || "");
         await fetch("/api/token", { method: "POST", body: fd });
     } catch (e) {}
     if (ov) ov.style.display = "none";
@@ -374,6 +386,7 @@ async function align() {
         const { job_id } = await response.json();
         window._tokenAskedForJob = false;
         window._tokenJobModel = null;
+        window._tokenJobId = null;
         window._tokenResolved = null;
         lastJobId = job_id;
         // Reset per-run state so a previous song's name can't leak into this one.
@@ -406,6 +419,7 @@ async function align() {
             if (job.need_token) {
                 if (window._tokenJobModel !== job.need_token) {
                     window._tokenJobModel = job.need_token;
+                    window._tokenJobId = job_id;
                     const ov = document.getElementById("tokenOverlay");
                     const msg = document.getElementById("tokenMsg");
                     if (msg) msg.textContent = `Model "${job.need_token}" is not downloaded. Enter an HF token to continue, or continue without one.`;
