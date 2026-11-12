@@ -457,12 +457,20 @@ def transcribe_with_whisper(
     beam_size: int = 8,
     best_of: int = 5,
     initial_prompt: Optional[str] = None,
-    fallback_temperatures: tuple = (0.2, 0.4),
+    fallback_temperatures: tuple = (),
     drop_looped: bool = True,
 ) -> tuple:
     """Run faster-whisper with word-level timestamps.
 
     Returns (words, skipped_looped_segments).
+
+    fallback_temperatures: extra temperatures faster-whisper may retry a
+        segment at when the first decode looks bad. Empty by default: the
+        retries sample at temperature > 0, so the same audio transcribes
+        differently on every run (measured: 335 vs 373 words on one track),
+        and the sampled segments were the ones that then tripped the
+        repetition-loop filter. A single temperature is deterministic and
+        scored equal or better on every track measured.
 
     drop_looped: discard segments that look like repetition hallucinations.
         Off by default being risky: fast rap sections and legitimate repeated
@@ -479,11 +487,8 @@ def transcribe_with_whisper(
     if progress_callback:
         progress_callback("transcribing", 0, "Transcribing...")
 
-    # Temperature fallback: when the first temperature decodes a segment
-    # with a high compression ratio (repetition loop), low logprob, or high
-    # no-speech probability, faster-whisper retries it at the next
-    # temperature instead of keeping the hallucination. A single float
-    # disables this, so always pass a tuple starting at the requested temp.
+    # A single float disables the retry ladder; a tuple enables it. Pass the
+    # requested temperature first so the first attempt is always the same.
     if isinstance(temperature, (list, tuple)):
         temperature_param = tuple(temperature)
     elif fallback_temperatures:
@@ -1025,7 +1030,7 @@ def align(
     best_of: int = 5,
     separate_vocals: bool = False,
     initial_prompt: Optional[str] = None,
-    fallback_temperatures: tuple = (0.2, 0.4),
+    fallback_temperatures: tuple = (),
     drop_looped: bool = True,
     similarity_mode: str = "bigram",
     accept_threshold: float = 0.4,

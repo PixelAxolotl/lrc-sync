@@ -31,6 +31,35 @@ def test_whisper_backend_missing_returns_empty_list(monkeypatch):
     assert whisper_backend.align_audio("/tmp/a.wav", [], None, "small") == []
 
 
+def _capture_transcribe_kwargs(monkeypatch):
+    import types
+    captured = {}
+
+    class FakeModel:
+        def transcribe(self, audio, **kw):
+            captured.update(kw)
+            return iter([]), types.SimpleNamespace(duration=1.0)
+
+    monkeypatch.setattr(aligner, "_load_whisper_model", lambda *a, **k: FakeModel())
+    monkeypatch.setattr(aligner, "_whisper_audio_input", lambda p: p)
+    return captured
+
+
+def test_transcribe_defaults_to_a_single_temperature(monkeypatch):
+    """The retry ladder samples at temperature > 0, so the same audio
+    transcribes differently on every run. Default to one temperature."""
+    captured = _capture_transcribe_kwargs(monkeypatch)
+    aligner.transcribe_with_whisper("/tmp/a.wav", "small", "en")
+    assert captured["temperature"] == 0.0
+
+
+def test_transcribe_retry_ladder_is_opt_in(monkeypatch):
+    captured = _capture_transcribe_kwargs(monkeypatch)
+    aligner.transcribe_with_whisper(
+        "/tmp/a.wav", "small", "en", fallback_temperatures=(0.2, 0.4))
+    assert captured["temperature"] == (0.0, 0.2, 0.4)
+
+
 import aligner as _aligner
 
 

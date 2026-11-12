@@ -191,6 +191,12 @@ average down. Full per-track breakdown: [docs/benchmark-v2.md](docs/benchmark-v2
 5. Post-processing: offset adjustment + merging + monotonic timestamps
 6. Output as standard LRC format
 
+Transcription runs at a single temperature. faster-whisper's temperature
+retry ladder samples at temperature > 0, which made the same audio transcribe
+differently on every run (335 vs 373 words on one benchmark track) and mostly
+produced the repetition loops the loop filter then discarded. Pass
+`fallback_temperatures=(0.2, 0.4)` to `align()` to restore the old behaviour.
+
 ## Supported Audio Formats
 
 MP3, WAV, FLAC, M4A, OGG, and anything ffmpeg supports.

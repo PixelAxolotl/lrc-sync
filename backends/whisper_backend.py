@@ -3,7 +3,7 @@ from aligner import WordTimestamp
 
 def align_audio(audio_path, lines, lang, model_size, progress_callback=None,
                temperature=0.0, beam_size=5, best_of=5, initial_prompt=None,
-               fallback_temperatures=(0.2, 0.4), drop_looped=True,
+               fallback_temperatures=(), drop_looped=True,
                warnings=None, **kwargs):
     from aligner import transcribe_with_whisper
     words, skipped_looped = transcribe_with_whisper(
